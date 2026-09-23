@@ -45,8 +45,7 @@ export default function Room() {
 
   const [streamReady, setStreamReady] = useState(false);
   const [error, setError] = useState('');
-  const [lastWsMsg, setLastWsMsg] = useState(null);
-  const [toasts, setToasts] = useState([]);
+    const [toasts, setToasts] = useState([]);
   const pollRef = useRef(null);
 
   // Clean Sidebar state: 'chat' | 'members'
@@ -75,6 +74,8 @@ export default function Room() {
 
   const { room, applyMessage } = useRoom(initialRoom);
 
+  const handleWebRTCMessageRef = useRef(null);
+
   const handleMessage = useCallback(
     (msg) => {
       if (msg.type === 'user_joined' && msg.user.id !== myUserId) {
@@ -101,8 +102,10 @@ export default function Room() {
         }
       }
 
-      setLastWsMsg(msg);
-      applyMessage(msg);
+      if (msg.type.startsWith("webrtc_") || msg.type === "host_changed") {
+        handleWebRTCMessageRef.current?.(msg);
+      }
+            applyMessage(msg);
     },
     [applyMessage, myUserId]
   );
@@ -130,16 +133,20 @@ export default function Room() {
     remoteStream,
     connectionState,
     connectedViewersCount,
+    handleWebRTCMessage
   } = useWebRTC({
     isHost,
     isP2P,
     localStream,
     send,
-    wsMsg: lastWsMsg,
     hostId: room?.hostId,
     myUserId,
     connected,
   });
+
+  useEffect(() => {
+    handleWebRTCMessageRef.current = handleWebRTCMessage;
+  }, [handleWebRTCMessage]);
 
   const localBlobUrl = useMemo(() => {
     if (!localFile) return null;

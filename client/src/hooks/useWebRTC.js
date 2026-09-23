@@ -21,7 +21,6 @@ export function useWebRTC({
   isP2P,
   localStream,
   send,
-  wsMsg,
   hostId,
   myUserId,
   connected
@@ -169,7 +168,7 @@ export function useWebRTC({
   }, [isHost, isP2P, connected, connectionState, requestStreamFromHost]);
 
   // WebSocket Message Dispatcher for WebRTC
-  useEffect(() => {
+  const handleWebRTCMessage = useCallback((wsMsg) => {
     if (!wsMsg || !isP2P) return;
 
     // HOST HANDLERS
@@ -308,7 +307,7 @@ export function useWebRTC({
         requestStreamFromHost();
       }
     }
-  }, [wsMsg, isHost, isP2P, handleViewerReady, send, connectionState, requestStreamFromHost]);
+  }, [isHost, isP2P, handleViewerReady, send, connectionState, requestStreamFromHost]);
 
   // Clean up all connections on unmount
   useEffect(() => {
@@ -328,6 +327,7 @@ export function useWebRTC({
     remoteStream,
     connectionState,
     connectedViewersCount,
-    requestStreamFromHost
+    requestStreamFromHost,
+    handleWebRTCMessage
   };
 }
