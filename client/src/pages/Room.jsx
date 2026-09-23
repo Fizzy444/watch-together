@@ -344,6 +344,8 @@ export default function Room() {
             src={videoSrc}
             isHost={isHost}
             wsMsg={lastWsMsg}
+            initialTime={room?.currentTime || 0}
+            initialPlaying={room?.playing || false}
             onPlay={handlePlay}
             onPause={handlePause}
             onSeek={handleSeek}

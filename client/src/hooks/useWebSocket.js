@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 export function getSessionClientId() {
-  let id = sessionStorage.getItem('wt_client_id');
+  let id = null;
+  try {
+    id = localStorage.getItem('wt_client_id') || sessionStorage.getItem('wt_client_id');
+  } catch {}
+
   if (!id) {
     id = (typeof crypto !== 'undefined' && crypto.randomUUID)
       ? crypto.randomUUID()
       : Math.random().toString(36).substring(2, 10) + '-' + Date.now();
-    sessionStorage.setItem('wt_client_id', id);
+    try {
+      localStorage.setItem('wt_client_id', id);
+      sessionStorage.setItem('wt_client_id', id);
+    } catch {}
   }
   return id;
 }

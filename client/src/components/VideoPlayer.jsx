@@ -29,6 +29,8 @@ export default function VideoPlayer({
   src,
   isHost,
   wsMsg,
+  initialTime = 0,
+  initialPlaying = false,
   onPlay,
   onPause,
   onSeek,
@@ -45,6 +47,23 @@ export default function VideoPlayer({
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [buffering, setBuffering] = useState(false);
+
+  // Restore playback state across reload/reconnection
+  const hasInitializedTime = useRef(false);
+  const pendingInitialTime = useRef(initialTime);
+  const pendingInitialPlaying = useRef(initialPlaying);
+
+  useEffect(() => {
+    if (initialTime > 0 && !hasInitializedTime.current) {
+      pendingInitialTime.current = initialTime;
+    }
+  }, [initialTime]);
+
+  useEffect(() => {
+    if (!hasInitializedTime.current) {
+      pendingInitialPlaying.current = initialPlaying;
+    }
+  }, [initialPlaying]);
 
   // HUD feedback for shortcuts
   const [hud, setHud] = useState(null);
@@ -108,9 +127,26 @@ export default function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
 
+    const onLoadedMetadata = () => {
+      setDuration(video.duration);
+      if (!hasInitializedTime.current) {
+        if (pendingInitialTime.current > 0) {
+          video.currentTime = pendingInitialTime.current;
+          setCurrentTime(pendingInitialTime.current);
+        }
+        hasInitializedTime.current = true;
+        if (pendingInitialPlaying.current) {
+          video.play().catch(() => {});
+        }
+      }
+    };
+
     const onTU = () => {
       setCurrentTime(video.currentTime);
-      onTimeUpdate?.(video.currentTime);
+      // Guard: do not report 0.0s time update before initial timestamp has been established
+      if (hasInitializedTime.current) {
+        onTimeUpdate?.(video.currentTime);
+      }
     };
     const onDM = () => setDuration(video.duration);
     const onWait = () => setBuffering(true);
@@ -125,6 +161,7 @@ export default function VideoPlayer({
       setBuffering(false);
     };
 
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
     video.addEventListener('timeupdate', onTU);
     video.addEventListener('durationchange', onDM);
     video.addEventListener('waiting', onWait);
@@ -134,6 +171,7 @@ export default function VideoPlayer({
     video.addEventListener('pause', onPauseEvent);
 
     return () => {
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
       video.removeEventListener('timeupdate', onTU);
       video.removeEventListener('durationchange', onDM);
       video.removeEventListener('waiting', onWait);
@@ -150,6 +188,25 @@ export default function VideoPlayer({
     const video = videoRef.current;
 
     switch (wsMsg.type) {
+      case 'room_state': {
+        const roomState = wsMsg.room;
+        if (roomState && !hasInitializedTime.current) {
+          const target = roomState.currentTime || 0;
+          pendingInitialTime.current = target;
+          pendingInitialPlaying.current = Boolean(roomState.playing);
+          if (video.readyState >= 1) {
+            if (target > 0) {
+              video.currentTime = target;
+              setCurrentTime(target);
+            }
+            hasInitializedTime.current = true;
+            if (roomState.playing) {
+              video.play().catch(() => {});
+            }
+          }
+        }
+        break;
+      }
       case 'play': {
         if (isHostRef.current) break; // Host already initiated play locally
         const networkLatency = wsMsg.serverTime ? Math.max(0, (Date.now() - wsMsg.serverTime) / 1000 / 2) : 0;
@@ -213,6 +270,7 @@ export default function VideoPlayer({
 
   // Play / Pause toggle
   const handlePlayPause = useCallback(() => {
+    hasInitializedTime.current = true;
     const video = videoRef.current;
     if (!video) return;
 
@@ -235,6 +293,7 @@ export default function VideoPlayer({
   // Skip relative seconds (+5, -5, +10, -10, etc.)
   const handleSkip = useCallback(
     (seconds) => {
+      hasInitializedTime.current = true;
       const video = videoRef.current;
       if (!video) return;
 

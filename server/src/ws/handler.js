@@ -7,6 +7,7 @@ import {
   roomPublicView,
   addChatMessage,
   deleteRoom,
+  getCurrentRoomTime,
 } from '../services/roomManager.js';
 import { SYNC_TICK_INTERVAL_MS } from '../config.js';
 
@@ -22,9 +23,10 @@ function startSyncTick(roomId) {
       syncTickers.delete(roomId);
       return;
     }
+    const currentPos = getCurrentRoomTime(room);
     broadcast(roomId, {
       type: 'sync_tick',
-      position: room.currentTime,
+      position: currentPos,
       playing: room.playing,
       serverTime: Date.now(),
     });
@@ -155,6 +157,7 @@ export function handleConnection(ws, req) {
         }
         currentRoom.playing = true;
         currentRoom.currentTime = msg.position ?? currentRoom.currentTime;
+        currentRoom.lastUpdated = Date.now();
         broadcast(currentRoomId, {
           type: 'play',
           position: currentRoom.currentTime,
@@ -171,6 +174,7 @@ export function handleConnection(ws, req) {
         }
         currentRoom.playing = false;
         currentRoom.currentTime = msg.position ?? currentRoom.currentTime;
+        currentRoom.lastUpdated = Date.now();
         broadcast(currentRoomId, {
           type: 'pause',
           position: currentRoom.currentTime,
@@ -185,6 +189,7 @@ export function handleConnection(ws, req) {
           return;
         }
         currentRoom.currentTime = msg.position ?? currentRoom.currentTime;
+        currentRoom.lastUpdated = Date.now();
         broadcast(currentRoomId, {
           type: 'seek',
           position: currentRoom.currentTime,
@@ -209,8 +214,9 @@ export function handleConnection(ws, req) {
       }
 
       case 'time_update': {
-        if (isHost) {
-          currentRoom.currentTime = msg.position ?? currentRoom.currentTime;
+        if (isHost && typeof msg.position === 'number') {
+          currentRoom.currentTime = msg.position;
+          currentRoom.lastUpdated = Date.now();
         }
         break;
       }

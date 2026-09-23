@@ -21,7 +21,7 @@ router.get('/', (_req, res) => {
 
 // POST /api/rooms — create a new room
 router.post('/', async (req, res) => {
-  const { movie, name } = req.body;
+  const { movie, name, clientId } = req.body;
 
   if (!movie) {
     return res.status(400).json({ error: 'movie filename is required' });
@@ -41,7 +41,7 @@ router.post('/', async (req, res) => {
 
   // Create room with custom name if provided
   const movieName = path.basename(movie, ext);
-  const room = createRoom(movie, movieName, name);
+  const room = createRoom(movie, movieName, name, clientId);
 
   // Background transcode to HLS if needed (optional fallback)
   transcodeToHLS(moviePath, room.id).catch((err) => {

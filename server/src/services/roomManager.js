@@ -31,7 +31,10 @@ const rooms = new Map();
  * @property {string} movieName    - display name (no extension)
  * @property {number} currentTime
  * @property {boolean} playing
+ * @property {number} lastUpdated  - timestamp of last play/pause/seek/tick
  * @property {string|null} hostId
+ * @property {string|null} creatorId
+ * @property {ReturnType<typeof setTimeout>|null} hostPromotionTimer
  * @property {RoomUser[]} users
  * @property {ChatMessage[]} messages
  * @property {number} createdAt
@@ -51,13 +54,26 @@ function resetExpiry(room) {
 }
 
 /**
+ * Calculate accurate current playback time accounting for elapsed time while playing
+ */
+export function getCurrentRoomTime(room) {
+  if (!room) return 0;
+  if (!room.playing || !room.lastUpdated) {
+    return room.currentTime || 0;
+  }
+  const elapsed = (Date.now() - room.lastUpdated) / 1000;
+  return (room.currentTime || 0) + elapsed;
+}
+
+/**
  * Create a new room and return it.
  * @param {string} movie     - filename
  * @param {string} movieName - display name
  * @param {string} [name]    - optional custom room title
+ * @param {string} [creatorId] - persistent client ID of creator
  * @returns {Room}
  */
-export function createRoom(movie, movieName, name = null) {
+export function createRoom(movie, movieName, name = null, creatorId = null) {
   const id = generateRoomId();
   const roomTitle = (name && name.trim()) ? name.trim() : movieName;
 
@@ -68,7 +84,10 @@ export function createRoom(movie, movieName, name = null) {
     movieName,
     currentTime: 0,
     playing: false,
-    hostId: null,
+    lastUpdated: Date.now(),
+    hostId: creatorId || null,
+    creatorId: creatorId || null,
+    hostPromotionTimer: null,
     users: [],
     messages: [],
     createdAt: Date.now(),
@@ -76,7 +95,7 @@ export function createRoom(movie, movieName, name = null) {
   };
   rooms.set(id, room);
   resetExpiry(room);
-  console.log(`[Room] Created room ${id} ("${roomTitle}") for movie "${movieName}"`);
+  console.log(`[Room] Created room ${id} ("${roomTitle}") for movie "${movieName}" (creatorId=${creatorId})`);
   return room;
 }
 
@@ -88,6 +107,7 @@ export function deleteRoom(id) {
   const room = rooms.get(id);
   if (room) {
     clearTimeout(room.expiryTimer);
+    clearTimeout(room.hostPromotionTimer);
     rooms.delete(id);
     cleanupHLS(id);
     console.log(`[Room] Deleted room ${id}`);
@@ -105,6 +125,13 @@ export function addUser(roomId, user) {
   const room = getRoom(roomId);
   if (!room) return null;
 
+  // If host returns, clear any pending host promotion timer
+  if (room.hostPromotionTimer && (user.id === room.hostId || user.id === room.creatorId)) {
+    clearTimeout(room.hostPromotionTimer);
+    room.hostPromotionTimer = null;
+    console.log(`[Room] Host ${user.name} (${user.id}) returned within grace period. Host status kept.`);
+  }
+
   const existingIndex = room.users.findIndex((u) => u.id === user.id);
   if (existingIndex !== -1) {
     const existing = room.users[existingIndex];
@@ -113,22 +140,32 @@ export function addUser(roomId, user) {
         existing.ws.close();
       } catch {}
     }
-    user.isHost = existing.isHost;
+    user.isHost = existing.isHost || (room.hostId === user.id) || (room.creatorId === user.id);
     room.users[existingIndex] = user;
-    if (existing.isHost) {
+    if (user.isHost) {
       room.hostId = user.id;
     }
     resetExpiry(room);
     return { room, isReconnect: true };
   }
 
-  // If room has no users, or hostId is null, or no existing host, this user becomes host
-  const hasHost = room.users.some((u) => u.isHost);
-  if (room.users.length === 0 || !room.hostId || !hasHost) {
+  // If this user is the room creator or recognized host, restore host
+  if (room.hostId === user.id || room.creatorId === user.id) {
     user.isHost = true;
     room.hostId = user.id;
+    if (room.hostPromotionTimer) {
+      clearTimeout(room.hostPromotionTimer);
+      room.hostPromotionTimer = null;
+    }
   } else {
-    user.isHost = false;
+    // If room has no active host, or no users, this user becomes host
+    const hasHost = room.users.some((u) => u.isHost);
+    if (room.users.length === 0 || !room.hostId || !hasHost) {
+      user.isHost = true;
+      room.hostId = user.id;
+    } else {
+      user.isHost = false;
+    }
   }
 
   room.users.push(user);
@@ -138,7 +175,7 @@ export function addUser(roomId, user) {
 
 /**
  * Remove a user from a room if the closing socket matches.
- * If host leaves, promote next user.
+ * If host leaves, promote next user after a 15-second grace period (so page reloads don't lose host).
  * @param {string} roomId
  * @param {string} userId
  * @param {import('ws').WebSocket} [ws]
@@ -152,20 +189,30 @@ export function removeUser(roomId, userId, ws = null) {
     return null;
   }
 
+  const wasHost = existing?.isHost || (room.hostId === userId);
   room.users = room.users.filter((u) => u.id !== userId);
 
-  if (room.users.length === 0) {
-    room.hostId = null;
-    return room;
+  // If host leaves and other members are still present, give 15s grace period before promoting someone else
+  if (wasHost && room.users.length > 0) {
+    clearTimeout(room.hostPromotionTimer);
+    room.hostPromotionTimer = setTimeout(() => {
+      const currentRoom = getRoom(roomId);
+      if (!currentRoom || currentRoom.users.length === 0) return;
+      const hostStillConnected = currentRoom.users.some((u) => u.id === currentRoom.hostId);
+      if (!hostStillConnected && currentRoom.users.length > 0) {
+        currentRoom.users[0].isHost = true;
+        currentRoom.hostId = currentRoom.users[0].id;
+        console.log(`[Room] Host grace period expired. Promoted ${currentRoom.users[0].name} to host in room ${roomId}`);
+        broadcast(roomId, {
+          type: 'host_changed',
+          newHostId: currentRoom.hostId,
+          newHostName: currentRoom.users[0].name,
+        });
+      }
+    }, 15000);
   }
 
-  // If host was removed or there is no current host, promote first remaining user
-  const hostStillPresent = room.users.some((u) => u.id === room.hostId && u.isHost);
-  if (!hostStillPresent) {
-    room.users[0].isHost = true;
-    room.hostId = room.users[0].id;
-    console.log(`[Room] Promoted ${room.users[0].name} to host in room ${roomId}`);
-  }
+  // NOTE: If room.users.length === 0, keep room.hostId intact so lone host can refresh smoothly!
 
   resetExpiry(room);
   return room;
@@ -201,12 +248,11 @@ export function getAllRooms() {
       movieName: room.movieName,
       usersCount: room.users.length,
       playing: room.playing,
-      currentTime: room.currentTime,
+      currentTime: getCurrentRoomTime(room),
       hostName: hostUser?.name || 'Host',
       createdAt: room.createdAt,
     });
   }
-  // Sort newest first
   return activeRooms.sort((a, b) => b.createdAt - a.createdAt);
 }
 
@@ -219,7 +265,7 @@ export function roomPublicView(room) {
     name: room.name || room.movieName,
     movie: room.movie,
     movieName: room.movieName,
-    currentTime: room.currentTime,
+    currentTime: getCurrentRoomTime(room),
     playing: room.playing,
     hostId: room.hostId,
     users: room.users.map(({ id, name, isHost }) => ({ id, name, isHost })),
