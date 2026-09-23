@@ -5,6 +5,7 @@ import {
   removeUser,
   broadcast,
   roomPublicView,
+  addChatMessage,
 } from '../services/roomManager.js';
 import { SYNC_TICK_INTERVAL_MS } from '../config.js';
 
@@ -78,7 +79,7 @@ export function handleConnection(ws, req) {
 
   console.log(`[WS] ${userName} (${clientId}) joined room ${roomId} (isReconnect=${isReconnect}, isHost=${user.isHost})`);
 
-  // Send full room state to the connecting user
+  // Send full room state (including chat messages) to the connecting user
   ws.send(JSON.stringify({
     type: 'room_state',
     room: roomPublicView(updatedRoom),
@@ -112,6 +113,25 @@ export function handleConnection(ws, req) {
     const isHost = currentRoom.hostId === clientId || currentRoom.users.some((u) => u.id === clientId && u.isHost);
 
     switch (msg.type) {
+      case 'chat': {
+        const text = typeof msg.text === 'string' ? msg.text.trim() : '';
+        if (!text) return;
+        const chatMsg = {
+          id: crypto.randomUUID(),
+          senderId: clientId,
+          senderName: userName,
+          text: text.slice(0, 500),
+          timestamp: Date.now(),
+          isHost: isHost,
+        };
+        addChatMessage(currentRoomId, chatMsg);
+        broadcast(currentRoomId, {
+          type: 'chat',
+          message: chatMsg,
+        });
+        break;
+      }
+
       case 'play': {
         if (!isHost) {
           ws.send(JSON.stringify({ type: 'error', message: 'Only the host can control playback' }));

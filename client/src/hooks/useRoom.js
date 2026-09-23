@@ -1,11 +1,13 @@
 import { useState, useCallback, useEffect } from 'react';
 
 export function useRoom(initialRoom) {
-  const [room, setRoom] = useState(initialRoom);
+  const [room, setRoom] = useState(
+    initialRoom ? { messages: [], ...initialRoom } : null
+  );
 
   useEffect(() => {
     if (initialRoom) {
-      setRoom((prev) => (prev ? { ...initialRoom, ...prev } : initialRoom));
+      setRoom((prev) => (prev ? { messages: [], ...initialRoom, ...prev } : { messages: [], ...initialRoom }));
     }
   }, [initialRoom]);
 
@@ -14,7 +16,22 @@ export function useRoom(initialRoom) {
 
     switch (msg.type) {
       case 'room_state':
-        setRoom(msg.room);
+        setRoom({
+          ...msg.room,
+          messages: msg.room.messages || [],
+        });
+        break;
+
+      case 'chat':
+        setRoom((r) => {
+          if (!r) return r;
+          const currentMsgs = r.messages || [];
+          if (currentMsgs.some((m) => m.id === msg.message.id)) return r;
+          return {
+            ...r,
+            messages: [...currentMsgs, msg.message],
+          };
+        });
         break;
 
       case 'user_joined':

@@ -6,7 +6,17 @@ import { useRoom } from '../hooks/useRoom.js';
 import VideoPlayer from '../components/VideoPlayer.jsx';
 import UserList from '../components/UserList.jsx';
 import RoomInfo from '../components/RoomInfo.jsx';
-import { ArrowLeft, Loader2, AlertTriangle, ShieldCheck, Crown } from 'lucide-react';
+import ChatBox from '../components/ChatBox.jsx';
+import {
+  ArrowLeft,
+  Loader2,
+  AlertTriangle,
+  ShieldCheck,
+  Crown,
+  MessageSquare,
+  Users,
+  Info,
+} from 'lucide-react';
 
 function getUserName() {
   let name = sessionStorage.getItem('wt_username');
@@ -28,6 +38,10 @@ export default function Room() {
   const [lastWsMsg, setLastWsMsg] = useState(null);
   const [toasts, setToasts] = useState([]);
   const pollRef = useRef(null);
+
+  // Sidebar tab state: 'chat' | 'members' | 'info'
+  const [activeTab, setActiveTab] = useState('chat');
+  const [unreadChat, setUnreadChat] = useState(0);
 
   const [initialRoom, setInitialRoom] = useState(null);
 
@@ -54,6 +68,16 @@ export default function Room() {
       }
       if (msg.type === 'error') {
         addToast(msg.message, 'error');
+      }
+
+      // If a chat message arrives while on another tab, show unread badge
+      if (msg.type === 'chat') {
+        setActiveTab((currentTab) => {
+          if (currentTab !== 'chat') {
+            setUnreadChat((prev) => prev + 1);
+          }
+          return currentTab;
+        });
       }
 
       setLastWsMsg(msg);
@@ -126,6 +150,20 @@ export default function Room() {
     [send]
   );
 
+  const handleSendMessage = useCallback(
+    (text) => {
+      send('chat', { text });
+    },
+    [send]
+  );
+
+  function handleTabSelect(tab) {
+    setActiveTab(tab);
+    if (tab === 'chat') {
+      setUnreadChat(0);
+    }
+  }
+
   if (error) {
     return (
       <div
@@ -165,18 +203,26 @@ export default function Room() {
     );
   }
 
-  // NAS-grade direct progressive streaming endpoint
+  // Direct progressive streaming endpoint
   const videoSrc = streamReady ? `/api/rooms/${roomId}/video` : null;
 
   return (
     <div className="layout-room">
       <div className="room-main">
+        {/* Room Header */}
         <div className="room-header">
-          <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')}>
+          <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')} title="Return to Home">
             <ArrowLeft size={18} />
           </button>
-          <div style={{ flex: 1, marginLeft: 'var(--sp-4)', fontWeight: 500, fontSize: '0.875rem' }}>
-            {room.movieName}
+          <div style={{ flex: 1, marginLeft: 'var(--sp-4)', display: 'flex', alignItems: 'baseline', gap: 'var(--sp-3)' }}>
+            <span style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'var(--text-1)' }}>
+              {room.name || room.movieName}
+            </span>
+            {room.name && room.name !== room.movieName && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-3)' }}>
+                ({room.movieName})
+              </span>
+            )}
           </div>
           <div
             style={{
@@ -192,6 +238,7 @@ export default function Room() {
           </div>
         </div>
 
+        {/* Video Player Container */}
         <div className="player-container">
           {!streamReady && (
             <div
@@ -219,7 +266,7 @@ export default function Room() {
           />
         </div>
 
-        {/* Host status pill */}
+        {/* Host status indicator pill */}
         <div
           style={{
             position: 'absolute',
@@ -256,15 +303,81 @@ export default function Room() {
         </div>
       </div>
 
-      <div className="room-sidebar">
-        <div className="sidebar-section" style={{ flex: 1, overflowY: 'auto' }}>
-          <UserList users={room.users} hostId={room.hostId} currentUserId={myUserId} />
+      {/* Right Sidebar with Chat & Members Tabs */}
+      <div className="room-sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
+        {/* Navigation Tabs */}
+        <div className="sidebar-tabs">
+          <button
+            className={`sidebar-tab ${activeTab === 'chat' ? 'active' : ''}`}
+            onClick={() => handleTabSelect('chat')}
+          >
+            <MessageSquare size={15} />
+            Chat
+            {unreadChat > 0 && activeTab !== 'chat' && (
+              <span
+                style={{
+                  background: 'var(--primary)',
+                  color: 'var(--primary-text)',
+                  fontSize: '0.65rem',
+                  fontWeight: 700,
+                  borderRadius: 'var(--r-full)',
+                  padding: '0 5px',
+                  height: 16,
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                {unreadChat}
+              </span>
+            )}
+          </button>
+
+          <button
+            className={`sidebar-tab ${activeTab === 'members' ? 'active' : ''}`}
+            onClick={() => handleTabSelect('members')}
+          >
+            <Users size={15} />
+            Members
+            <span className="sidebar-tab-badge">{room.users?.length || 0}</span>
+          </button>
+
+          <button
+            className={`sidebar-tab ${activeTab === 'info' ? 'active' : ''}`}
+            onClick={() => handleTabSelect('info')}
+          >
+            <Info size={15} />
+            Info
+          </button>
         </div>
-        <div className="sidebar-section">
-          <RoomInfo roomId={roomId} />
-        </div>
+
+        {/* Tab 1: Live Chat */}
+        {activeTab === 'chat' && (
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <ChatBox
+              messages={room.messages || []}
+              onSendMessage={handleSendMessage}
+              currentUserId={myUserId}
+              hostId={room.hostId}
+            />
+          </div>
+        )}
+
+        {/* Tab 2: Members List */}
+        {activeTab === 'members' && (
+          <div className="sidebar-section" style={{ flex: 1, overflowY: 'auto' }}>
+            <UserList users={room.users} hostId={room.hostId} currentUserId={myUserId} />
+          </div>
+        )}
+
+        {/* Tab 3: Session Link & Shortcuts */}
+        {activeTab === 'info' && (
+          <div className="sidebar-section" style={{ flex: 1, overflowY: 'auto' }}>
+            <RoomInfo roomId={roomId} />
+          </div>
+        )}
       </div>
 
+      {/* Floating Notifications */}
       <div className="toast-container">
         {toasts.map((t) => (
           <div

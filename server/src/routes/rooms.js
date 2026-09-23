@@ -6,14 +6,20 @@ import { transcodeToHLS } from '../services/ffmpeg.js';
 import {
   createRoom,
   getRoom,
+  getAllRooms,
   roomPublicView,
 } from '../services/roomManager.js';
 
 const router = express.Router();
 
+// GET /api/rooms — list all active rooms for discovery / search
+router.get('/', (_req, res) => {
+  res.json(getAllRooms());
+});
+
 // POST /api/rooms — create a new room
 router.post('/', async (req, res) => {
-  const { movie } = req.body;
+  const { movie, name } = req.body;
 
   if (!movie) {
     return res.status(400).json({ error: 'movie filename is required' });
@@ -31,9 +37,9 @@ router.post('/', async (req, res) => {
     return res.status(404).json({ error: `Movie not found: ${movie}` });
   }
 
-  // Create room
+  // Create room with custom name if provided
   const movieName = path.basename(movie, ext);
-  const room = createRoom(movie, movieName);
+  const room = createRoom(movie, movieName, name);
 
   // Background transcode to HLS if needed (optional fallback)
   transcodeToHLS(moviePath, room.id).catch((err) => {

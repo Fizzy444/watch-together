@@ -6,6 +6,12 @@ export async function getMovies() {
   return res.json();
 }
 
+export async function getActiveRooms() {
+  const res = await fetch(`${BASE}/rooms`);
+  if (!res.ok) throw new Error('Failed to fetch active rooms');
+  return res.json();
+}
+
 export async function uploadMovie(file, onProgress) {
   return new Promise((resolve, reject) => {
     const form = new FormData();
@@ -34,11 +40,11 @@ export async function uploadMovie(file, onProgress) {
   });
 }
 
-export async function createRoom(movie) {
+export async function createRoom(movie, name = '') {
   const res = await fetch(`${BASE}/rooms`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ movie }),
+    body: JSON.stringify({ movie, name }),
   });
   if (!res.ok) {
     const err = await res.json();

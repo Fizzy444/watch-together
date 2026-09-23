@@ -6,6 +6,16 @@ import { cleanupHLS } from './ffmpeg.js';
 const rooms = new Map();
 
 /**
+ * @typedef {Object} ChatMessage
+ * @property {string} id
+ * @property {string} senderId
+ * @property {string} senderName
+ * @property {string} text
+ * @property {number} timestamp
+ * @property {boolean} isHost
+ */
+
+/**
  * @typedef {Object} RoomUser
  * @property {string} id
  * @property {string} name
@@ -16,12 +26,14 @@ const rooms = new Map();
 /**
  * @typedef {Object} Room
  * @property {string} id
+ * @property {string} name         - custom room title (e.g. "Movie Night")
  * @property {string} movie        - filename (e.g. "interstellar.mkv")
  * @property {string} movieName    - display name (no extension)
  * @property {number} currentTime
  * @property {boolean} playing
  * @property {string|null} hostId
  * @property {RoomUser[]} users
+ * @property {ChatMessage[]} messages
  * @property {number} createdAt
  * @property {ReturnType<typeof setTimeout>} expiryTimer
  */
@@ -40,26 +52,31 @@ function resetExpiry(room) {
 
 /**
  * Create a new room and return it.
- * @param {string} movie   - filename
+ * @param {string} movie     - filename
  * @param {string} movieName - display name
+ * @param {string} [name]    - optional custom room title
  * @returns {Room}
  */
-export function createRoom(movie, movieName) {
+export function createRoom(movie, movieName, name = null) {
   const id = generateRoomId();
+  const roomTitle = (name && name.trim()) ? name.trim() : movieName;
+
   const room = {
     id,
+    name: roomTitle,
     movie,
     movieName,
     currentTime: 0,
     playing: false,
     hostId: null,
     users: [],
+    messages: [],
     createdAt: Date.now(),
     expiryTimer: null,
   };
   rooms.set(id, room);
   resetExpiry(room);
-  console.log(`[Room] Created room ${id} for movie "${movieName}"`);
+  console.log(`[Room] Created room ${id} ("${roomTitle}") for movie "${movieName}"`);
   return room;
 }
 
@@ -131,7 +148,6 @@ export function removeUser(roomId, userId, ws = null) {
   if (!room) return null;
 
   const existing = room.users.find((u) => u.id === userId);
-  // If a specific socket was passed and it doesn't match the active user's socket, ignore
   if (existing && ws && existing.ws !== ws) {
     return null;
   }
@@ -156,17 +172,65 @@ export function removeUser(roomId, userId, ws = null) {
 }
 
 /**
+ * Add a chat message to room history (max 50 messages).
+ * @param {string} roomId
+ * @param {ChatMessage} message
+ */
+export function addChatMessage(roomId, message) {
+  const room = getRoom(roomId);
+  if (!room) return null;
+  if (!room.messages) room.messages = [];
+  room.messages.push(message);
+  if (room.messages.length > 50) {
+    room.messages = room.messages.slice(-50);
+  }
+  return message;
+}
+
+/**
+ * Get a list of all active rooms for public directory / discovery.
+ */
+export function getAllRooms() {
+  const activeRooms = [];
+  for (const room of rooms.values()) {
+    const hostUser = room.users.find((u) => u.id === room.hostId || u.isHost);
+    activeRooms.push({
+      id: room.id,
+      name: room.name || room.movieName,
+      movie: room.movie,
+      movieName: room.movieName,
+      usersCount: room.users.length,
+      playing: room.playing,
+      currentTime: room.currentTime,
+      hostName: hostUser?.name || 'Host',
+      createdAt: room.createdAt,
+    });
+  }
+  // Sort newest first
+  return activeRooms.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
  * Return a safe, serializable view of the room (no ws references).
  */
 export function roomPublicView(room) {
   return {
     id: room.id,
+    name: room.name || room.movieName,
     movie: room.movie,
     movieName: room.movieName,
     currentTime: room.currentTime,
     playing: room.playing,
     hostId: room.hostId,
     users: room.users.map(({ id, name, isHost }) => ({ id, name, isHost })),
+    messages: (room.messages || []).map(({ id, senderId, senderName, text, timestamp, isHost }) => ({
+      id,
+      senderId,
+      senderName,
+      text,
+      timestamp,
+      isHost,
+    })),
     createdAt: room.createdAt,
   };
 }
