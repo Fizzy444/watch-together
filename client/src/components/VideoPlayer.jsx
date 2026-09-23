@@ -12,7 +12,9 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 
-const DRIFT_THRESHOLD = 2; // seconds
+// Sync thresholds (seconds)
+const HARD_SEEK_THRESHOLD = 8.0;   // Only hard-seek if drift is > 8 seconds
+const CATCHUP_THRESHOLD = 0.5;     // Smoothly speed up/down if drift is > 0.5s
 
 function formatTime(s) {
   if (!isFinite(s) || isNaN(s)) return '0:00';
@@ -142,34 +144,67 @@ export default function VideoPlayer({
     };
   }, [onTimeUpdate]);
 
-  // WebSocket sync dispatcher
+  // Buttery-smooth WebSocket sync dispatcher
   useEffect(() => {
     if (!wsMsg || !videoRef.current) return;
     const video = videoRef.current;
 
     switch (wsMsg.type) {
       case 'play': {
-        const networkLatency = wsMsg.serverTime ? (Date.now() - wsMsg.serverTime) / 1000 / 2 : 0;
+        if (isHostRef.current) break; // Host already initiated play locally
+        const networkLatency = wsMsg.serverTime ? Math.max(0, (Date.now() - wsMsg.serverTime) / 1000 / 2) : 0;
         const targetTime = (wsMsg.position ?? video.currentTime) + networkLatency;
-        if (Math.abs(video.currentTime - targetTime) > 0.5) {
+        
+        // Only seek if far off (e.g. > 3s)
+        if (Math.abs(video.currentTime - targetTime) > 3) {
           video.currentTime = targetTime;
         }
+        video.playbackRate = 1.0;
         video.play().catch((err) => console.log('[Playback] Auto-play blocked:', err));
         break;
       }
-      case 'pause':
-        video.currentTime = wsMsg.position ?? video.currentTime;
+
+      case 'pause': {
+        if (isHostRef.current) break;
         video.pause();
-        break;
-      case 'seek':
         video.currentTime = wsMsg.position ?? video.currentTime;
+        video.playbackRate = 1.0;
         break;
+      }
+
+      case 'seek': {
+        if (isHostRef.current) break;
+        video.currentTime = wsMsg.position ?? video.currentTime;
+        video.playbackRate = 1.0;
+        break;
+      }
+
       case 'sync_tick': {
-        if (!wsMsg.playing) break;
-        const networkLatency = wsMsg.serverTime ? (Date.now() - wsMsg.serverTime) / 1000 / 2 : 0;
+        // Do not sync host to themselves
+        if (isHostRef.current || !wsMsg.playing) break;
+
+        // If the video is currently buffering or not yet playing, don't interrupt it!
+        if (video.seeking || video.readyState < 3) break;
+
+        const networkLatency = wsMsg.serverTime ? Math.max(0, (Date.now() - wsMsg.serverTime) / 1000 / 2) : 0;
         const expected = (wsMsg.position ?? video.currentTime) + networkLatency;
-        if (Math.abs(video.currentTime - expected) > DRIFT_THRESHOLD) {
+        const drift = expected - video.currentTime; // positive = behind host, negative = ahead of host
+
+        if (Math.abs(drift) > HARD_SEEK_THRESHOLD) {
+          // Large desync (> 8s, e.g. skipped forward) -> perform hard seek
           video.currentTime = expected;
+          video.playbackRate = 1.0;
+        } else if (drift > CATCHUP_THRESHOLD) {
+          // Slightly behind host: smoothly speed up by 8% to catch up without buffer flush
+          video.playbackRate = 1.08;
+        } else if (drift < -CATCHUP_THRESHOLD) {
+          // Slightly ahead of host: smoothly slow down by 5%
+          video.playbackRate = 0.95;
+        } else {
+          // Perfectly in sync (within 0.5s): normal speed
+          if (video.playbackRate !== 1.0) {
+            video.playbackRate = 1.0;
+          }
         }
         break;
       }

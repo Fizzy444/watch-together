@@ -18,4 +18,4 @@ export const ALLOWED_MIME_TYPES = [
 ];
 
 export const ROOM_EXPIRY_MS = 6 * 60 * 60 * 1000; // 6 hours
-export const SYNC_TICK_INTERVAL_MS = 5000;          // 5 seconds
+export const SYNC_TICK_INTERVAL_MS = 10000;         // 10 seconds
