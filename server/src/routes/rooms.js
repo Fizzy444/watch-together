@@ -8,6 +8,8 @@ import {
   getRoom,
   getAllRooms,
   roomPublicView,
+  deleteRoom,
+  broadcast,
 } from '../services/roomManager.js';
 
 const router = express.Router();
@@ -60,6 +62,26 @@ router.get('/:id', (req, res) => {
   res.json(roomPublicView(room));
 });
 
+// DELETE /api/rooms/:id — Host closes the room
+router.delete('/:id', (req, res) => {
+  const room = getRoom(req.params.id);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+
+  const clientId = req.headers['x-client-id'] || req.body?.clientId;
+  if (clientId && room.hostId && room.hostId !== clientId) {
+    return res.status(403).json({ error: 'Only the host can close the room' });
+  }
+
+  console.log(`[Room] Host closed room ${room.id} via API`);
+  broadcast(room.id, {
+    type: 'room_closed',
+    message: 'The host has ended this watch session.',
+  });
+
+  deleteRoom(room.id);
+  res.json({ success: true, message: 'Room closed' });
+});
+
 // GET /api/rooms/:id/stream/status — check stream status
 router.get('/:id/stream/status', (req, res) => {
   const room = getRoom(req.params.id);
@@ -80,6 +102,7 @@ router.get('/:id/stream/status', (req, res) => {
 });
 
 // GET /api/rooms/:id/video — Direct progressive video streaming (NAS style with HTTP 206 Range)
+// Optimized with chunk size limits (3MB max) and Cache-Control for fast, smooth tunnel streaming
 router.get('/:id/video', (req, res) => {
   const room = getRoom(req.params.id);
   if (!room) return res.status(404).json({ error: 'Room not found' });
@@ -100,12 +123,25 @@ router.get('/:id/video', (req, res) => {
   else if (ext === '.avi') contentType = 'video/x-msvideo';
   else if (ext === '.mov') contentType = 'video/quicktime';
 
+  // 3 MB chunk limit: Prevents Cloudflare / reverse proxy socket timeouts
+  // and allows seamless multiplexing between WebSocket sync and video chunks
+  const CHUNK_SIZE = 3 * 1024 * 1024;
+
   if (range) {
     const parts = range.replace(/bytes=/, '').split('-');
     const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    let end = parts[1] ? parseInt(parts[1], 10) : start + CHUNK_SIZE - 1;
 
-    if (start >= fileSize || end >= fileSize) {
+    // Cap requested range to CHUNK_SIZE (or unbounded)
+    if (end - start + 1 > CHUNK_SIZE) {
+      end = start + CHUNK_SIZE - 1;
+    }
+
+    if (end >= fileSize) {
+      end = fileSize - 1;
+    }
+
+    if (start >= fileSize) {
       res.status(416).setHeader('Content-Range', `bytes */${fileSize}`);
       return res.end();
     }
@@ -113,20 +149,33 @@ router.get('/:id/video', (req, res) => {
     const chunksize = end - start + 1;
     const stream = fs.createReadStream(moviePath, { start, end });
 
+    // Abort disk read immediately if client disconnects or seeks away
+    res.on('close', () => {
+      stream.destroy();
+    });
+
     res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${fileSize}`,
       'Accept-Ranges': 'bytes',
       'Content-Length': chunksize,
       'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=3600',
     });
     stream.pipe(res);
   } else {
+    // If client requested without range, stream with caching and range support
+    const stream = fs.createReadStream(moviePath);
+    res.on('close', () => {
+      stream.destroy();
+    });
+
     res.writeHead(200, {
       'Content-Length': fileSize,
       'Accept-Ranges': 'bytes',
       'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=3600',
     });
-    fs.createReadStream(moviePath).pipe(res);
+    stream.pipe(res);
   }
 });
 

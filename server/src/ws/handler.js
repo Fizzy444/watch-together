@@ -6,6 +6,7 @@ import {
   broadcast,
   roomPublicView,
   addChatMessage,
+  deleteRoom,
 } from '../services/roomManager.js';
 import { SYNC_TICK_INTERVAL_MS } from '../config.js';
 
@@ -189,6 +190,21 @@ export function handleConnection(ws, req) {
           position: currentRoom.currentTime,
           initiator: userName,
         });
+        break;
+      }
+
+      case 'close_room': {
+        if (!isHost) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Only the host can close the room' }));
+          return;
+        }
+        console.log(`[WS] Host ${userName} closed room ${currentRoomId}`);
+        broadcast(currentRoomId, {
+          type: 'room_closed',
+          message: 'The host has ended this watch session.',
+        });
+        stopSyncTick(currentRoomId);
+        deleteRoom(currentRoomId);
         break;
       }
 

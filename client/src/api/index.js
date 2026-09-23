@@ -64,3 +64,18 @@ export async function getStreamStatus(roomId) {
   if (!res.ok) return { ready: false };
   return res.json();
 }
+
+export async function closeRoom(roomId, clientId = '') {
+  const res = await fetch(`${BASE}/rooms/${roomId}`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-client-id': clientId,
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to close room');
+  }
+  return res.json();
+}

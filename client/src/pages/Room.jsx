@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getRoom, getStreamStatus } from '../api/index.js';
+import { getRoom, getStreamStatus, closeRoom } from '../api/index.js';
 import { useWebSocket, getSessionClientId } from '../hooks/useWebSocket.js';
 import { useRoom } from '../hooks/useRoom.js';
 import { getProfileName, saveProfileName } from '../utils/profile.js';
@@ -21,6 +21,7 @@ import {
   Check,
   Keyboard,
   X,
+  Power,
 } from 'lucide-react';
 
 export default function Room() {
@@ -42,6 +43,9 @@ export default function Room() {
   const [activeTab, setActiveTab] = useState('chat');
   const [unreadChat, setUnreadChat] = useState(0);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [isRoomClosed, setIsRoomClosed] = useState(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   const [initialRoom, setInitialRoom] = useState(null);
@@ -69,6 +73,10 @@ export default function Room() {
       }
       if (msg.type === 'error') {
         addToast(msg.message, 'error');
+      }
+      if (msg.type === 'room_closed') {
+        setIsRoomClosed({ message: msg.message || 'The host has ended this watch session.' });
+        return;
       }
 
       // If a chat message arrives while on another tab, show unread badge
@@ -112,6 +120,31 @@ export default function Room() {
     const id = Date.now() + Math.random();
     setToasts((prev) => [...prev, { id, msg, type }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
+  }
+
+  // Auto-redirect if room was closed
+  useEffect(() => {
+    if (!isRoomClosed) return;
+    const timer = setTimeout(() => {
+      navigate('/');
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [isRoomClosed, navigate]);
+
+  async function handleCloseRoom() {
+    setClosing(true);
+    try {
+      send('close_room', {});
+      await closeRoom(roomId, myUserId).catch(() => {});
+      addToast('Room closed');
+      navigate('/');
+    } catch (err) {
+      console.error('Failed to close room:', err);
+      navigate('/');
+    } finally {
+      setClosing(false);
+      setShowCloseConfirm(false);
+    }
   }
 
   function handleProfileSave(newName) {
@@ -267,6 +300,27 @@ export default function Room() {
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />
             {connected ? 'Connected' : 'Connecting...'}
           </div>
+
+          {isHost && (
+            <button
+              className="btn btn-danger-soft btn-sm"
+              onClick={() => setShowCloseConfirm(true)}
+              title="Close room for everyone"
+              style={{
+                marginLeft: 'var(--sp-3)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.75rem',
+                height: 28,
+                borderRadius: 'var(--r-md)',
+                cursor: 'pointer',
+              }}
+            >
+              <Power size={13} />
+              <span>Close Room</span>
+            </button>
+          )}
         </div>
 
         {/* Video Player Container */}
@@ -484,6 +538,102 @@ export default function Room() {
         onSave={handleProfileSave}
         isMandatory={!userName}
       />
+
+      {/* Close Room Confirmation Modal */}
+      {showCloseConfirm && (
+        <div className="modal-backdrop" onClick={() => !closing && setShowCloseConfirm(false)}>
+          <div
+            className="modal-content"
+            style={{ maxWidth: 400 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                <AlertTriangle size={18} color="var(--error)" />
+                <h3 style={{ fontSize: '0.9375rem', margin: 0 }}>Close Watch Session?</h3>
+              </div>
+              <button
+                className="btn-icon"
+                onClick={() => setShowCloseConfirm(false)}
+                disabled={closing}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ padding: 'var(--sp-4)' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-2)', lineHeight: 1.5, margin: 0 }}>
+                Are you sure you want to end this room? All connected members will be disconnected and this room will be removed.
+              </p>
+            </div>
+
+            <div
+              className="modal-footer"
+              style={{
+                padding: 'var(--sp-3) var(--sp-4)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 'var(--sp-2)',
+                borderTop: '1px solid var(--border)',
+              }}
+            >
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => setShowCloseConfirm(false)}
+                disabled={closing}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={handleCloseRoom}
+                disabled={closing}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                {closing ? <Loader2 className="spinner" size={13} /> : <Power size={13} />}
+                <span>{closing ? 'Closing...' : 'Close Room'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Room Closed Overlay */}
+      {isRoomClosed && (
+        <div className="modal-backdrop" style={{ zIndex: 1000, background: 'rgba(0, 0, 0, 0.88)' }}>
+          <div
+            className="modal-content"
+            style={{ maxWidth: 400, textAlign: 'center', padding: 'var(--sp-6)' }}
+          >
+            <div
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: '50%',
+                background: 'rgba(239, 68, 68, 0.12)',
+                color: 'var(--error)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto var(--sp-4)',
+              }}
+            >
+              <Power size={22} />
+            </div>
+            <h3 style={{ fontSize: '1.0625rem', marginBottom: 'var(--sp-2)' }}>Session Ended</h3>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-2)', marginBottom: 'var(--sp-6)', lineHeight: 1.5 }}>
+              {isRoomClosed.message}
+            </p>
+            <button
+              className="btn btn-primary"
+              onClick={() => navigate('/')}
+              style={{ width: '100%', justifyContent: 'center' }}
+            >
+              Return to Home
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Floating Notifications */}
       <div className="toast-container">

@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import path from 'path';
@@ -18,6 +19,17 @@ const app = express();
 
 // Open CORS so clients connecting via IPv6, localhost, or LAN work seamlessly
 app.use(cors());
+
+// Gzip compression for API responses and static assets
+app.use(compression({
+  filter: (req, res) => {
+    // Never compress video endpoints or range requests
+    if (req.headers.range || req.path.includes('/video') || req.path.includes('/stream')) {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
 app.use(express.json());
 
 // API routes
