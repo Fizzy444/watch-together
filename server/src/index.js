@@ -7,13 +7,23 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { PORT } from './config.js';
+import { PORT, HLS_DIR } from './config.js';
 import moviesRouter from './routes/movies.js';
 import roomsRouter from './routes/rooms.js';
+import authRouter from './routes/auth.js';
 import { handleConnection } from './ws/handler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(__dirname, '../../client/dist');
+
+// Clean up any stale HLS directories on startup to ensure zero disk clutter
+if (fs.existsSync(HLS_DIR)) {
+  try {
+    for (const entry of fs.readdirSync(HLS_DIR)) {
+      fs.rmSync(path.join(HLS_DIR, entry), { recursive: true, force: true });
+    }
+  } catch {}
+}
 
 const app = express();
 
@@ -35,6 +45,7 @@ app.use(express.json());
 // API routes
 app.use('/api/movies', moviesRouter);
 app.use('/api/rooms', roomsRouter);
+app.use('/api/auth', authRouter);
 
 // Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));

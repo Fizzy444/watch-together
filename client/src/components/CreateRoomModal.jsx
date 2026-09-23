@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { createRoom } from '../api/index.js';
 import { getSessionClientId } from '../hooks/useWebSocket.js';
+import { addMovieToUserLibrary } from '../utils/library.js';
 import { useNavigate } from 'react-router-dom';
 import UploadZone from './UploadZone.jsx';
 import { X, Film, Loader2, Plus, Check } from 'lucide-react';
@@ -55,6 +56,7 @@ export default function CreateRoomModal({
         roomName.trim() || selectedMovie.name,
         clientId
       );
+      addMovieToUserLibrary(selectedMovie.filename, movies);
       onClose();
       navigate(`/watch/${room.roomId}`);
     } catch (err) {

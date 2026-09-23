@@ -7,7 +7,6 @@ import { getProfileName, saveProfileName } from '../utils/profile.js';
 import VideoPlayer from '../components/VideoPlayer.jsx';
 import UserList from '../components/UserList.jsx';
 import ChatBox from '../components/ChatBox.jsx';
-import ProfileBadge from '../components/ProfileBadge.jsx';
 import ProfileModal from '../components/ProfileModal.jsx';
 import {
   ArrowLeft,
@@ -126,7 +125,7 @@ export default function Room() {
   useEffect(() => {
     if (!isRoomClosed) return;
     const timer = setTimeout(() => {
-      navigate('/');
+      navigate('/dashboard');
     }, 3500);
     return () => clearTimeout(timer);
   }, [isRoomClosed, navigate]);
@@ -137,10 +136,10 @@ export default function Room() {
       send('close_room', {});
       await closeRoom(roomId, myUserId).catch(() => {});
       addToast('Room closed');
-      navigate('/');
+      navigate('/dashboard');
     } catch (err) {
       console.error('Failed to close room:', err);
-      navigate('/');
+      navigate('/dashboard');
     } finally {
       setClosing(false);
       setShowCloseConfirm(false);
@@ -243,7 +242,7 @@ export default function Room() {
         <AlertTriangle size={48} color="var(--error)" style={{ marginBottom: 'var(--sp-4)' }} />
         <h2 style={{ marginBottom: 'var(--sp-2)' }}>{error}</h2>
         <p style={{ marginBottom: 'var(--sp-6)' }}>The session may have ended or the URL is invalid.</p>
-        <button className="btn btn-secondary" onClick={() => navigate('/')}>
+        <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>
           Return to Library
         </button>
       </div>
@@ -271,207 +270,188 @@ export default function Room() {
   const videoSrc = streamReady ? `/api/rooms/${roomId}/video` : null;
 
   return (
-    <div className="layout-room">
-      <div className="room-main">
-        {/* Room Header */}
-        <div className="room-header">
-          <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')} title="Return to Home">
+    <div className="room-page-wrapper">
+      {/* Dedicated Top Bar for Room: Extra space, invite link, stop room button */}
+      <header className="room-topbar">
+        <div className="room-topbar-left">
+          <button
+            className="btn btn-ghost btn-sm room-topbar-back"
+            onClick={() => navigate('/dashboard')}
+            title="Return to Dashboard"
+          >
             <ArrowLeft size={18} />
           </button>
-          <div style={{ flex: 1, marginLeft: 'var(--sp-4)', display: 'flex', alignItems: 'baseline', gap: 'var(--sp-3)' }}>
-            <span style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'var(--text-1)' }}>
+
+          <div className="room-topbar-titles">
+            <span className="room-topbar-title">
               {room.name || room.movieName}
             </span>
             {room.name && room.name !== room.movieName && (
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-3)' }}>
+              <span className="room-topbar-subtitle">
                 ({room.movieName})
               </span>
             )}
           </div>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--sp-2)',
-              fontSize: '0.75rem',
-              color: connected ? 'var(--success)' : 'var(--text-3)',
-            }}
-          >
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />
-            {connected ? 'Connected' : 'Connecting...'}
+
+          <div className="room-topbar-status">
+            <span
+              className="room-topbar-status-dot"
+              style={{ background: connected ? 'var(--success)' : 'var(--text-3)' }}
+            />
+            <span className="room-topbar-status-text">
+              {connected ? 'Connected' : 'Connecting...'}
+            </span>
           </div>
 
-          {isHost && (
+          {isHost ? (
+            <span
+              className="badge badge-host"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', fontSize: '0.6875rem' }}
+            >
+              <Crown size={11} />
+              Host
+            </span>
+          ) : (
+            <span className="badge" style={{ padding: '2px 7px', fontSize: '0.6875rem', color: 'var(--text-3)' }}>
+              Viewer
+            </span>
+          )}
+        </div>
+
+        <div className="room-topbar-right">
+          {/* Invite Link Button */}
+          <button
+            className="btn btn-secondary btn-sm room-topbar-btn"
+            onClick={copyRoomLink}
+            title={copiedLink ? 'Link copied to clipboard!' : 'Copy room invite link'}
+          >
+            {copiedLink ? <Check size={14} color="var(--success)" /> : <Link2 size={14} />}
+            <span>{copiedLink ? 'Copied!' : 'Invite Link'}</span>
+          </button>
+
+          {/* Stop Room (Host) or Leave Room */}
+          {isHost ? (
             <button
-              className="btn btn-danger-soft btn-sm"
+              className="btn btn-danger-soft btn-sm room-topbar-btn room-topbar-stop-btn"
               onClick={() => setShowCloseConfirm(true)}
               title="Close room for everyone"
-              style={{
-                marginLeft: 'var(--sp-3)',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '0.75rem',
-                height: 28,
-                borderRadius: 'var(--r-md)',
-                cursor: 'pointer',
-              }}
             >
-              <Power size={13} />
-              <span>Close Room</span>
+              <Power size={14} />
+              <span>Stop Room</span>
             </button>
-          )}
-        </div>
-
-        {/* Video Player Container */}
-        <div className="player-container">
-          {!streamReady && (
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                color: 'var(--text-2)',
-                zIndex: 5,
-              }}
-            >
-              <Loader2 className="spinner" size={32} style={{ marginBottom: 'var(--sp-4)' }} />
-              <p style={{ fontSize: '0.875rem' }}>Initializing stream...</p>
-            </div>
-          )}
-
-          <VideoPlayer
-            src={videoSrc}
-            isHost={isHost}
-            wsMsg={lastWsMsg}
-            initialTime={room?.currentTime || 0}
-            initialPlaying={room?.playing || false}
-            onPlay={handlePlay}
-            onPause={handlePause}
-            onSeek={handleSeek}
-            onTimeUpdate={handleTimeUpdate}
-          />
-        </div>
-
-        {/* Host status indicator pill */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 'var(--sp-4)',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: isHost ? 'rgba(34, 197, 94, 0.15)' : 'rgba(0,0,0,0.7)',
-            padding: 'var(--sp-2) var(--sp-4)',
-            borderRadius: 'var(--r-full)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--sp-2)',
-            zIndex: 10,
-            backdropFilter: 'blur(6px)',
-            border: `1px solid ${isHost ? 'rgba(34, 197, 94, 0.3)' : 'rgba(255,255,255,0.1)'}`,
-            pointerEvents: 'none',
-          }}
-        >
-          {isHost ? (
-            <>
-              <Crown size={14} color="#22c55e" />
-              <span style={{ fontSize: '0.75rem', color: '#22c55e', fontWeight: 500 }}>
-                You are the host (Playback controls active)
-              </span>
-            </>
           ) : (
-            <>
-              <ShieldCheck size={14} color="var(--text-2)" />
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-2)' }}>
-                <strong style={{ color: 'var(--text-1)' }}>{hostName}</strong> controls playback
-              </span>
-            </>
+            <button
+              className="btn btn-ghost btn-sm room-topbar-btn"
+              onClick={() => navigate('/dashboard')}
+              title="Leave Room"
+            >
+              <ArrowLeft size={14} />
+              <span>Leave</span>
+            </button>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* Clean Right Sidebar */}
-      <div className="room-sidebar clean-sidebar">
-        {/* Clean Segmented Header Tabs */}
-        <div className="clean-sidebar-header">
-          <div className="sidebar-tabs" style={{ border: 'none', background: 'transparent', flex: 1 }}>
-            <button
-              className={`sidebar-tab ${activeTab === 'chat' ? 'active' : ''}`}
-              onClick={() => handleTabSelect('chat')}
-              style={{ borderRadius: 'var(--r-md)', padding: '6px 12px' }}
-            >
-              <MessageSquare size={14} />
-              Chat
-              {unreadChat > 0 && activeTab !== 'chat' && (
-                <span
-                  style={{
-                    background: 'var(--primary)',
-                    color: 'var(--primary-text)',
-                    fontSize: '0.65rem',
-                    fontWeight: 700,
-                    borderRadius: 'var(--r-full)',
-                    padding: '0 5px',
-                    height: 16,
-                    display: 'flex',
-                    alignItems: 'center',
-                  }}
-                >
-                  {unreadChat}
-                </span>
-              )}
-            </button>
+      {/* Main Watch Layout (Video Canvas + Chat Sidebar) */}
+      <div className="layout-room">
+        <div className="room-main">
+          {/* Video Player Container */}
+          <div className="player-container">
+            {!streamReady && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  color: 'var(--text-2)',
+                  zIndex: 5,
+                }}
+              >
+                <Loader2 className="spinner" size={32} style={{ marginBottom: 'var(--sp-4)' }} />
+                <p style={{ fontSize: '0.875rem' }}>Initializing stream...</p>
+              </div>
+            )}
 
-            <button
-              className={`sidebar-tab ${activeTab === 'members' ? 'active' : ''}`}
-              onClick={() => handleTabSelect('members')}
-              style={{ borderRadius: 'var(--r-md)', padding: '6px 12px' }}
-            >
-              <Users size={14} />
-              Members
-              <span className="sidebar-tab-badge">{room.users?.length || 0}</span>
-            </button>
+            <VideoPlayer
+              src={videoSrc}
+              isHost={isHost}
+              wsMsg={lastWsMsg}
+              initialTime={room?.currentTime || 0}
+              initialPlaying={room?.playing || false}
+              wasPlayingBeforeDisconnect={Boolean(room?.wasPlayingBeforeHostDisconnect || room?.hostDisconnected)}
+              onPlay={handlePlay}
+              onPause={handlePause}
+              onSeek={handleSeek}
+              onTimeUpdate={handleTimeUpdate}
+            />
           </div>
         </div>
 
-        {/* Clean Sidebar Content Body */}
-        <div className="clean-sidebar-body">
-          {activeTab === 'chat' ? (
-            <ChatBox
-              messages={room.messages || []}
-              onSendMessage={handleSendMessage}
-              currentUserId={myUserId}
-              hostId={room.hostId}
-            />
-          ) : (
-            <div style={{ padding: 'var(--sp-4)', flex: 1, overflowY: 'auto' }}>
-              <UserList users={room.users} hostId={room.hostId} currentUserId={myUserId} />
+        {/* Clean Right Sidebar */}
+        <div className="room-sidebar clean-sidebar">
+          {/* Clean Segmented Header Tabs */}
+          <div className="clean-sidebar-header">
+            <div className="sidebar-tabs" style={{ border: 'none', background: 'transparent', flex: 1, padding: 0 }}>
+              <button
+                className={`sidebar-tab ${activeTab === 'chat' ? 'active' : ''}`}
+                onClick={() => handleTabSelect('chat')}
+                style={{ borderRadius: 'var(--r-md)', padding: '6px 12px' }}
+              >
+                <MessageSquare size={14} />
+                Chat
+                {unreadChat > 0 && activeTab !== 'chat' && (
+                  <span
+                    style={{
+                      background: 'var(--primary)',
+                      color: 'var(--primary-text)',
+                      fontSize: '0.65rem',
+                      fontWeight: 700,
+                      borderRadius: 'var(--r-full)',
+                      padding: '0 5px',
+                      height: 16,
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    {unreadChat}
+                  </span>
+                )}
+              </button>
+
+              <button
+                className={`sidebar-tab ${activeTab === 'members' ? 'active' : ''}`}
+                onClick={() => handleTabSelect('members')}
+                style={{ borderRadius: 'var(--r-md)', padding: '6px 12px' }}
+              >
+                <Users size={14} />
+                Members
+                <span className="sidebar-tab-badge">{room.users?.length || 0}</span>
+              </button>
             </div>
-          )}
-        </div>
-
-        {/* Clean Sidebar Footer: Profile Widget + Action Buttons */}
-        <div className="clean-sidebar-footer">
-          <ProfileBadge
-            name={userName}
-            onEdit={() => setIsProfileModalOpen(true)}
-          />
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-            <button
-              className="sidebar-action-btn"
-              onClick={copyRoomLink}
-              title={copiedLink ? 'Link copied!' : 'Copy invite link'}
-            >
-              {copiedLink ? <Check size={14} color="var(--success)" /> : <Link2 size={14} />}
-            </button>
 
             <button
-              className="sidebar-action-btn"
+              className="sidebar-action-btn sidebar-shortcuts-btn"
               onClick={() => setShowShortcuts((v) => !v)}
               title="Keyboard shortcuts"
             >
               <Keyboard size={14} />
             </button>
+          </div>
+
+          {/* Clean Sidebar Content Body */}
+          <div className="clean-sidebar-body">
+            {activeTab === 'chat' ? (
+              <ChatBox
+                messages={room.messages || []}
+                onSendMessage={handleSendMessage}
+                currentUserId={myUserId}
+                hostId={room.hostId}
+              />
+            ) : (
+              <div style={{ padding: 'var(--sp-4)', flex: 1, overflowY: 'auto' }}>
+                <UserList users={room.users} hostId={room.hostId} currentUserId={myUserId} />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -628,7 +608,7 @@ export default function Room() {
             </p>
             <button
               className="btn btn-primary"
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/dashboard')}
               style={{ width: '100%', justifyContent: 'center' }}
             >
               Return to Home

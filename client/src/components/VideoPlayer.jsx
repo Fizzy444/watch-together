@@ -31,6 +31,7 @@ export default function VideoPlayer({
   wsMsg,
   initialTime = 0,
   initialPlaying = false,
+  wasPlayingBeforeDisconnect = false,
   onPlay,
   onPause,
   onSeek,
@@ -47,6 +48,45 @@ export default function VideoPlayer({
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [buffering, setBuffering] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(false);
+  const hideControlsTimer = useRef(null);
+
+  const bumpControls = useCallback(() => {
+    setControlsVisible(true);
+    clearTimeout(hideControlsTimer.current);
+    hideControlsTimer.current = setTimeout(() => {
+      setControlsVisible(false);
+    }, 3500);
+  }, []);
+
+  const handleContainerClick = useCallback((e) => {
+    // If clicked on input or button, keep controls visible
+    if (e.target.closest("button") || e.target.closest("input")) {
+      bumpControls();
+      return;
+    }
+    // Toggle on mobile/touch tap
+    setControlsVisible((prev) => {
+      if (!prev) {
+        bumpControls();
+        return true;
+      } else {
+        clearTimeout(hideControlsTimer.current);
+        return false;
+      }
+    });
+  }, [bumpControls]);
+  const [hostReconnecting, setHostReconnecting] = useState(false);
+
+  // Play-to-pause catchup for lagging viewers
+  const pendingPauseTarget = useRef(null);
+  const pendingPauseTimer = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(pendingPauseTimer.current);
+    };
+  }, []);
 
   // Restore playback state across reload/reconnection
   const hasInitializedTime = useRef(false);
@@ -135,14 +175,37 @@ export default function VideoPlayer({
           setCurrentTime(pendingInitialTime.current);
         }
         hasInitializedTime.current = true;
-        if (pendingInitialPlaying.current) {
-          video.play().catch(() => {});
+        if (pendingInitialPlaying.current || wasPlayingBeforeDisconnect) {
+          video.play()
+            .then(() => {
+              if (isHostRef.current) {
+                onPlay?.(video.currentTime);
+              }
+            })
+            .catch(() => {
+              if (isHostRef.current) {
+                showHud({ icon: 'play', text: 'Press Space to resume' });
+              }
+            });
         }
       }
     };
 
     const onTU = () => {
       setCurrentTime(video.currentTime);
+
+      // If lagging viewer is catching up to host pause timestamp:
+      if (pendingPauseTarget.current !== null) {
+        if (video.currentTime >= pendingPauseTarget.current - 0.1) {
+          clearTimeout(pendingPauseTimer.current);
+          const snapTime = pendingPauseTarget.current;
+          pendingPauseTarget.current = null;
+          video.pause();
+          video.currentTime = snapTime;
+          video.playbackRate = 1.0;
+        }
+      }
+
       // Guard: do not report 0.0s time update before initial timestamp has been established
       if (hasInitializedTime.current) {
         onTimeUpdate?.(video.currentTime);
@@ -208,6 +271,9 @@ export default function VideoPlayer({
         break;
       }
       case 'play': {
+        clearTimeout(pendingPauseTimer.current);
+        pendingPauseTarget.current = null;
+        setHostReconnecting(false);
         if (isHostRef.current) break; // Host already initiated play locally
         const networkLatency = wsMsg.serverTime ? Math.max(0, (Date.now() - wsMsg.serverTime) / 1000 / 2) : 0;
         const targetTime = (wsMsg.position ?? video.currentTime) + networkLatency;
@@ -222,14 +288,44 @@ export default function VideoPlayer({
       }
 
       case 'pause': {
+        if (wsMsg.hostDisconnected) {
+          setHostReconnecting(true);
+        }
         if (isHostRef.current) break;
-        video.pause();
-        video.currentTime = wsMsg.position ?? video.currentTime;
-        video.playbackRate = 1.0;
+
+        const targetPauseTime = typeof wsMsg.position === 'number' ? wsMsg.position : null;
+        const CATCHUP_MAX_LAG = 10.0; // Up to 10s lag: keep playing until target timestamp
+        const lag = targetPauseTime !== null ? (targetPauseTime - video.currentTime) : 0;
+
+        if (targetPauseTime !== null && lag > 0.3 && lag <= CATCHUP_MAX_LAG && !video.paused) {
+          // Viewer is behind: let them continue playing until they reach the host pause position
+          pendingPauseTarget.current = targetPauseTime;
+          video.playbackRate = 1.0;
+
+          clearTimeout(pendingPauseTimer.current);
+          pendingPauseTimer.current = setTimeout(() => {
+            if (pendingPauseTarget.current !== null && videoRef.current) {
+              const snap = pendingPauseTarget.current;
+              pendingPauseTarget.current = null;
+              videoRef.current.pause();
+              videoRef.current.currentTime = snap;
+            }
+          }, Math.max(500, (lag + 1.5) * 1000));
+        } else {
+          clearTimeout(pendingPauseTimer.current);
+          pendingPauseTarget.current = null;
+          video.pause();
+          if (targetPauseTime !== null) {
+            video.currentTime = targetPauseTime;
+          }
+          video.playbackRate = 1.0;
+        }
         break;
       }
 
       case 'seek': {
+        clearTimeout(pendingPauseTimer.current);
+        pendingPauseTarget.current = null;
         if (isHostRef.current) break;
         video.currentTime = wsMsg.position ?? video.currentTime;
         video.playbackRate = 1.0;
@@ -239,6 +335,8 @@ export default function VideoPlayer({
       case 'sync_tick': {
         // Do not sync host to themselves
         if (isHostRef.current || !wsMsg.playing) break;
+        // Do not interrupt while playing towards pause target
+        if (pendingPauseTarget.current !== null) break;
 
         // If the video is currently buffering or not yet playing, don't interrupt it!
         if (video.seeking || video.readyState < 3) break;
@@ -448,7 +546,7 @@ export default function VideoPlayer({
   }, [handlePlayPause, handleSkip, changeVolume, toggleMute, toggleFullscreen]);
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: '#000' }}>
+    <div onClick={handleContainerClick} onMouseMove={bumpControls} style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: '#000' }}>
       <video
         ref={videoRef}
         playsInline
@@ -461,6 +559,35 @@ export default function VideoPlayer({
           cursor: isHost ? 'pointer' : 'default',
         }}
       />
+
+      {/* Host Reconnecting Banner (guests only) */}
+      {hostReconnecting && !isHost && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'var(--sp-4)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 15,
+            background: 'rgba(0, 0, 0, 0.85)',
+            border: '1px solid rgba(234, 179, 8, 0.4)',
+            borderRadius: 'var(--r-full)',
+            padding: '8px 18px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            color: '#eab308',
+            fontSize: '0.8125rem',
+            fontWeight: 500,
+            backdropFilter: 'blur(8px)',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+            pointerEvents: 'none',
+          }}
+        >
+          <Loader2 className="spinner" size={15} color="#eab308" />
+          <span>Host reloaded — paused until host continues</span>
+        </div>
+      )}
 
       {/* Buffering Spinner */}
       {buffering && (
@@ -523,7 +650,7 @@ export default function VideoPlayer({
       )}
 
       {/* Player Controls Bar */}
-      <div className="player-controls">
+      <div className={`player-controls ${controlsVisible ? "visible" : ""}`}>
         <input
           type="range"
           className="player-seek"
@@ -608,6 +735,7 @@ export default function VideoPlayer({
 
           <input
             type="range"
+            className="player-volume-slider"
             min={0}
             max={1}
             step={0.05}

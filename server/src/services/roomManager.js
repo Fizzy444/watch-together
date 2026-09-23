@@ -248,6 +248,7 @@ export function getAllRooms() {
       movieName: room.movieName,
       usersCount: room.users.length,
       playing: room.playing,
+    wasPlayingBeforeHostDisconnect: Boolean(room.wasPlayingBeforeHostDisconnect),
       currentTime: getCurrentRoomTime(room),
       hostName: hostUser?.name || 'Host',
       createdAt: room.createdAt,

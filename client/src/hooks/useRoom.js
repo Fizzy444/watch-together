@@ -19,6 +19,7 @@ export function useRoom(initialRoom) {
         setRoom({
           ...msg.room,
           messages: msg.room.messages || [],
+          hostDisconnected: Boolean(msg.room?.wasPlayingBeforeHostDisconnect),
         });
         break;
 
@@ -82,11 +83,11 @@ export function useRoom(initialRoom) {
         break;
 
       case 'play':
-        setRoom((r) => (!r ? r : { ...r, playing: true, currentTime: msg.position ?? r.currentTime }));
+        setRoom((r) => (!r ? r : { ...r, playing: true, currentTime: msg.position ?? r.currentTime, hostDisconnected: false }));
         break;
 
       case 'pause':
-        setRoom((r) => (!r ? r : { ...r, playing: false, currentTime: msg.position ?? r.currentTime }));
+        setRoom((r) => (!r ? r : { ...r, playing: false, currentTime: msg.position ?? r.currentTime, hostDisconnected: Boolean(msg.hostDisconnected) }));
         break;
 
       case 'seek':

@@ -2,7 +2,6 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { MEDIA_DIR, HLS_DIR, ALLOWED_EXTENSIONS } from '../config.js';
-import { transcodeToHLS } from '../services/ffmpeg.js';
 import {
   createRoom,
   getRoom,
@@ -43,10 +42,7 @@ router.post('/', async (req, res) => {
   const movieName = path.basename(movie, ext);
   const room = createRoom(movie, movieName, name, clientId);
 
-  // Background transcode to HLS if needed (optional fallback)
-  transcodeToHLS(moviePath, room.id).catch((err) => {
-    console.warn(`[Transcode] Background HLS note for room ${room.id}:`, err.message);
-  });
+  // Direct progressive streaming is used by default (0 extra disk space)
 
   res.json({
     roomId: room.id,

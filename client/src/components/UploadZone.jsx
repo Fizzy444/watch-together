@@ -1,3 +1,4 @@
+import { addMovieToUserLibrary } from '../utils/library.js';
 import { useState, useRef } from 'react';
 import { uploadMovie } from '../api/index.js';
 import { UploadCloud, Loader2 } from 'lucide-react';
@@ -31,7 +32,10 @@ export default function UploadZone({ onUploaded }) {
 
     try {
       const result = await uploadMovie(file, setProgress);
-      onUploaded?.(result.movies);
+      if (result.file) {
+        addMovieToUserLibrary(result.file, result.movies);
+      }
+      onUploaded?.(result.movies, result.file);
     } catch (e) {
       setError(e.message);
     } finally {

@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getMovies, getActiveRooms } from '../api/index.js';
-import { getProfileName, saveProfileName } from '../utils/profile.js';
+import { getProfileName } from '../utils/profile.js';
+import { getStoredUser } from '../utils/auth.js';
 import MovieCard from '../components/MovieCard.jsx';
 import UploadZone from '../components/UploadZone.jsx';
 import CreateRoomModal from '../components/CreateRoomModal.jsx';
 import ProfileBadge from '../components/ProfileBadge.jsx';
-import ProfileModal from '../components/ProfileModal.jsx';
+import AddMovieModal from '../components/AddMovieModal.jsx';
+import AuthModal from '../components/AuthModal.jsx';
+import { isMovieInUserLibrary, removeMovieFromUserLibrary } from '../utils/library.js';
 import {
   PlaySquare,
   Plus,
@@ -17,6 +20,7 @@ import {
   Loader2,
   AlertCircle,
   ArrowRight,
+  Info,
 } from 'lucide-react';
 
 export default function Home() {
@@ -27,9 +31,14 @@ export default function Home() {
   const [loadingRooms, setLoadingRooms] = useState(true);
   const [error, setError] = useState('');
 
-  // Profile state
-  const [profileName, setProfileName] = useState(getProfileName);
-  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  // Auth & Profile state (username is permanent)
+  const [currentUser, setCurrentUser] = useState(getStoredUser);
+  const [profileName, setProfileName] = useState(() => {
+    const user = getStoredUser();
+    return user?.username || getProfileName();
+  });
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState('signin');
 
   // Search & Direct Join state
   const [searchQuery, setSearchQuery] = useState('');
@@ -38,6 +47,28 @@ export default function Home() {
   // Create Room modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [preselectedMovie, setPreselectedMovie] = useState(null);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [libraryVersion, setLibraryVersion] = useState(0);
+
+  useEffect(() => {
+    const onLibChanged = () => setLibraryVersion((v) => v + 1);
+    window.addEventListener('wt-library-changed', onLibChanged);
+    return () => window.removeEventListener('wt-library-changed', onLibChanged);
+  }, []);
+
+  useEffect(() => {
+    const handleAuthChange = (e) => {
+      const u = e.detail?.user || null;
+      setCurrentUser(u);
+      if (u?.username) {
+        setProfileName(u.username);
+      }
+    };
+    window.addEventListener('wt-auth-changed', handleAuthChange);
+    return () => window.removeEventListener('wt-auth-changed', handleAuthChange);
+  }, []);
+
+  const myMovies = movies.filter((m) => isMovieInUserLibrary(m.filename, movies));
 
   const fetchMoviesList = useCallback(async () => {
     try {
@@ -70,7 +101,8 @@ export default function Home() {
 
   function handleOpenCreateModal(movie = null) {
     if (!profileName) {
-      setIsProfileModalOpen(true);
+      setAuthModalMode('signin');
+      setAuthModalOpen(true);
       return;
     }
     setPreselectedMovie(movie);
@@ -82,7 +114,8 @@ export default function Home() {
     const code = directCode.trim();
     if (!code) return;
     if (!profileName) {
-      setIsProfileModalOpen(true);
+      setAuthModalMode('signin');
+      setAuthModalOpen(true);
       return;
     }
     navigate(`/watch/${code}`);
@@ -90,15 +123,18 @@ export default function Home() {
 
   function handleJoinRoom(roomId) {
     if (!profileName) {
-      setIsProfileModalOpen(true);
+      setAuthModalMode('signin');
+      setAuthModalOpen(true);
       return;
     }
     navigate(`/watch/${roomId}`);
   }
 
-  function handleProfileSave(newName) {
-    saveProfileName(newName);
-    setProfileName(newName);
+  function handleAuthSuccess(user) {
+    setCurrentUser(user);
+    if (user?.username) {
+      setProfileName(user.username);
+    }
   }
 
   // Filtered rooms based on search
@@ -139,24 +175,52 @@ export default function Home() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              cursor: 'pointer',
             }}
+            onClick={() => navigate('/')}
+            title="Go to About page"
           >
             <PlaySquare size={24} />
           </div>
           <div>
-            <h1 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>Watch Together</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+              <h1 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>Watch Together</h1>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => navigate('/')}
+                style={{ padding: '2px 8px', fontSize: '0.75rem', color: 'var(--text-3)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                title="View About site & features"
+              >
+                <Info size={12} />
+                About
+              </button>
+            </div>
             <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', margin: 0 }}>
               Private synchronized video streaming
             </p>
           </div>
         </div>
 
-        {/* Header Right Actions: Profile Badge + Create Room */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
-          <ProfileBadge
-            name={profileName}
-            onEdit={() => setIsProfileModalOpen(true)}
-          />
+        {/* Header Right Actions: Profile / Auth + Create Room */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
+          {currentUser ? (
+            <ProfileBadge name={currentUser.username} />
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+              {profileName && <ProfileBadge name={profileName} />}
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  setAuthModalMode('signin');
+                  setAuthModalOpen(true);
+                }}
+                style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+              >
+                <LogIn size={14} />
+                Sign In
+              </button>
+            </div>
+          )}
 
           <button
             className="btn btn-primary"
@@ -210,6 +274,7 @@ export default function Home() {
           {/* Direct Code Join Form */}
           <form
             onSubmit={handleDirectJoin}
+            className="home-direct-join-form"
             style={{ display: 'flex', gap: 'var(--sp-2)', flex: '0 0 auto' }}
           >
             <input
@@ -226,13 +291,12 @@ export default function Home() {
               disabled={!directCode.trim()}
               title="Join private room"
             >
-              <LogIn size={14} />
-              Join
+              <LogIn size={14} /> Join
             </button>
           </form>
         </section>
 
-        {/* Section 1: Active Rooms Directory */}
+        {/* Section 1: Active Rooms */}
         <section>
           <div
             style={{
@@ -324,7 +388,7 @@ export default function Home() {
           )}
         </section>
 
-        {/* Section 2: Media Library */}
+        {/* Section 2: Personal Media Library */}
         <section>
           <div
             style={{
@@ -336,11 +400,19 @@ export default function Home() {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
               <Film size={16} />
-              <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Media Library</h3>
-              {!loadingMovies && movies.length > 0 && (
-                <span className="badge">{movies.length} {movies.length === 1 ? 'file' : 'files'}</span>
+              <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>My Media Library</h3>
+              {!loadingMovies && myMovies.length > 0 && (
+                <span className="badge">{myMovies.length} {myMovies.length === 1 ? 'movie' : 'movies'}</span>
               )}
             </div>
+
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setIsAddModalOpen(true)}
+              title="Add movies to your personal library"
+            >
+              <Plus size={13} /> Add Movie
+            </button>
           </div>
 
           {loadingMovies ? (
@@ -356,19 +428,42 @@ export default function Home() {
               </div>
               <button className="btn btn-secondary btn-sm" onClick={fetchMoviesList}>Retry</button>
             </div>
-          ) : movies.length === 0 ? (
-            <div className="card" style={{ padding: 'var(--sp-8)', textAlign: 'center', color: 'var(--text-2)' }}>
-              <Film size={32} style={{ margin: '0 auto var(--sp-2)', opacity: 0.4 }} />
-              <p style={{ fontWeight: 500, color: 'var(--text-1)' }}>Your library is empty</p>
-              <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)' }}>Upload a video file below to get started.</p>
+          ) : myMovies.length === 0 ? (
+            <div
+              className="card"
+              style={{
+                padding: 'var(--sp-8)',
+                textAlign: 'center',
+                color: 'var(--text-2)',
+                background: 'var(--bg-card)',
+              }}
+            >
+              <Film size={32} style={{ margin: '0 auto var(--sp-2)', opacity: 0.3 }} />
+              <p style={{ fontWeight: 500, color: 'var(--text-1)', marginBottom: 'var(--sp-1)' }}>
+                Your media library is empty
+              </p>
+              <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', marginBottom: 'var(--sp-4)' }}>
+                Only movies you select or upload are visible in your personal library.
+              </p>
+              <div style={{ display: 'flex', gap: 'var(--sp-3)', justifyContent: 'center' }}>
+                {movies.length > 0 && (
+                  <button className="btn btn-secondary btn-sm" onClick={() => setIsAddModalOpen(true)}>
+                    <Plus size={14} /> Add from Available Movies
+                  </button>
+                )}
+                <button className="btn btn-primary btn-sm" onClick={() => handleOpenCreateModal()}>
+                  <Plus size={14} /> Create Room
+                </button>
+              </div>
             </div>
           ) : (
             <div className="movie-grid">
-              {movies.map((movie) => (
+              {myMovies.map((movie) => (
                 <MovieCard
                   key={movie.id}
                   movie={movie}
                   onSelectForRoom={handleOpenCreateModal}
+                  onRemove={(m) => removeMovieFromUserLibrary(m.filename, movies)}
                 />
               ))}
             </div>
@@ -393,12 +488,20 @@ export default function Home() {
         onMovieUploaded={setMovies}
       />
 
-      {/* Profile Modal */}
-      <ProfileModal
-        isOpen={isProfileModalOpen}
-        onClose={() => setIsProfileModalOpen(false)}
-        currentName={profileName}
-        onSave={handleProfileSave}
+      {/* Add Movie Modal */}
+      <AddMovieModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        movies={movies}
+        onMovieUploaded={fetchMoviesList}
+      />
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        initialMode={authModalMode}
+        onClose={() => setAuthModalOpen(false)}
+        onSuccess={handleAuthSuccess}
       />
     </div>
   );

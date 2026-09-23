@@ -1,22 +1,20 @@
-import { User, Edit3 } from 'lucide-react';
+import { User } from 'lucide-react';
 
-export default function ProfileBadge({ name, onEdit, compact = false }) {
+export default function ProfileBadge({ name }) {
   const initial = name ? name[0].toUpperCase() : '?';
 
   return (
-    <button
+    <div
       className="profile-badge-btn"
-      onClick={onEdit}
-      title="Click to edit display name"
-      type="button"
+      style={{ cursor: 'default', userSelect: 'none' }}
+      title={name ? `Signed in as ${name}` : 'Guest'}
     >
       <div className="profile-badge-avatar">
         {name ? initial : <User size={12} />}
       </div>
       <span className="profile-badge-name">
-        {name || 'Set Name'}
+        {name || 'Anonymous'}
       </span>
-      <Edit3 size={12} className="profile-badge-icon" />
-    </button>
+    </div>
   );
 }

@@ -156,6 +156,7 @@ export function handleConnection(ws, req) {
           return;
         }
         currentRoom.playing = true;
+        currentRoom.wasPlayingBeforeHostDisconnect = false;
         currentRoom.currentTime = msg.position ?? currentRoom.currentTime;
         currentRoom.lastUpdated = Date.now();
         broadcast(currentRoomId, {
@@ -233,6 +234,24 @@ export function handleConnection(ws, req) {
 
   ws.on('close', () => {
     console.log(`[WS] ${userName} (${clientId}) disconnected from room ${currentRoomId}`);
+    const currentRoom = getRoom(currentRoomId);
+    if (currentRoom) {
+      const isHostUser = currentRoom.hostId === clientId || currentRoom.creatorId === clientId;
+      if (isHostUser && currentRoom.playing) {
+        const pausePos = getCurrentRoomTime(currentRoom);
+        currentRoom.currentTime = pausePos;
+        currentRoom.playing = false;
+        currentRoom.wasPlayingBeforeHostDisconnect = true;
+        currentRoom.lastUpdated = Date.now();
+        console.log(`[Room] Host ${userName} disconnected while playing. Auto-paused room ${currentRoomId} at ${pausePos.toFixed(1)}s for all peers.`);
+        broadcast(currentRoomId, {
+          type: 'pause',
+          position: pausePos,
+          initiator: 'Host (Reloading...)',
+          hostDisconnected: true,
+        });
+      }
+    }
     const r = removeUser(currentRoomId, clientId, ws);
     if (r) {
       broadcast(currentRoomId, { type: 'user_left', userId: clientId, userName });
