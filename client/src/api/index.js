@@ -40,11 +40,15 @@ export async function uploadMovie(file, onProgress) {
   });
 }
 
-export async function createRoom(movie, name = '', clientId = '') {
+export async function createRoom(movie, name = '', clientId = '', extra = {}) {
+  const payload = typeof movie === 'object'
+    ? { ...movie, clientId: movie.clientId || clientId }
+    : { movie, name, clientId, ...extra };
+
   const res = await fetch(`${BASE}/rooms`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ movie, name, clientId }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const err = await res.json();

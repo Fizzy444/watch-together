@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useWebRTC } from '../hooks/useWebRTC.js';
 import { getRoom, getStreamStatus, closeRoom } from '../api/index.js';
 import { useWebSocket, getSessionClientId } from '../hooks/useWebSocket.js';
 import { useRoom } from '../hooks/useRoom.js';
@@ -21,11 +22,19 @@ import {
   Keyboard,
   X,
   Power,
+  Zap,
+  Upload,
 } from 'lucide-react';
 
 export default function Room() {
   const { roomId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Local File & P2P Broadcast State
+  const [localFile, setLocalFile] = useState(() => location.state?.localFile || window.__wt_p2p_file || null);
+  const [localStream, setLocalStream] = useState(null);
+  const filePickerRef = useRef(null);
 
   // Profile state — NO default 'Host' or 'Guest' name!
   const [userName, setUserName] = useState(getProfileName);
@@ -101,8 +110,48 @@ export default function Room() {
     handleMessage
   );
 
+  const isP2P = Boolean(room?.streamType === 'p2p' || room?.movie === 'p2p-stream');
+
+  // WebRTC Peer-to-Peer Engine
+  const {
+    remoteStream,
+    connectionState,
+    connectedViewersCount,
+  } = useWebRTC({
+    isHost: Boolean(
+      (room?.hostId && room.hostId === myUserId) ||
+      (room?.users?.find((u) => u.id === myUserId)?.isHost) ||
+      (room?.users?.length === 1) ||
+      (room?.users && !room.users.some((u) => u.isHost))
+    ),
+    isP2P,
+    localStream,
+    send,
+    wsMsg: lastWsMsg,
+    hostId: room?.hostId,
+    myUserId,
+    connected,
+  });
+
+  const localBlobUrl = useMemo(() => {
+    if (!localFile) return null;
+    return URL.createObjectURL(localFile);
+  }, [localFile]);
+
+  useEffect(() => {
+    return () => {
+      if (localBlobUrl) {
+        URL.revokeObjectURL(localBlobUrl);
+      }
+    };
+  }, [localBlobUrl]);
+
   useEffect(() => {
     if (streamReady) return;
+    if (isP2P) {
+      setStreamReady(true);
+      return;
+    }
     const check = async () => {
       const status = await getStreamStatus(roomId).catch(() => ({ ready: false }));
       if (status.ready) {
@@ -113,7 +162,7 @@ export default function Room() {
     check();
     pollRef.current = setInterval(check, 2000);
     return () => clearInterval(pollRef.current);
-  }, [roomId, streamReady]);
+  }, [roomId, streamReady, isP2P]);
 
   function addToast(msg, type = 'info') {
     const id = Date.now() + Math.random();
@@ -316,6 +365,25 @@ export default function Room() {
               Viewer
             </span>
           )}
+
+          {isP2P && (
+            <span
+              className="badge"
+              style={{
+                background: "rgba(234, 179, 8, 0.12)",
+                color: "#eab308",
+                border: "1px solid rgba(234, 179, 8, 0.3)",
+                padding: "2px 7px",
+                fontSize: "0.6875rem",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <Zap size={11} />
+              P2P WebRTC
+            </span>
+          )}
         </div>
 
         <div className="room-topbar-right">
@@ -356,7 +424,7 @@ export default function Room() {
       <div className="layout-room">
         <div className="room-main">
           {/* Video Player Container */}
-          <div className="player-container">
+          <div className="player-container" style={{ position: "relative" }}>
             {!streamReady && (
               <div
                 style={{
@@ -372,8 +440,71 @@ export default function Room() {
               </div>
             )}
 
+            {/* Host Local File Picker Overlay (if host reloaded or needs to pick file) */}
+            {isP2P && isHost && !localFile && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  zIndex: 25,
+                  background: "var(--bg-card)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "var(--sp-6)",
+                  textAlign: "center",
+                }}
+              >
+                <div
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: "50%",
+                    background: "rgba(234, 179, 8, 0.12)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginBottom: "var(--sp-4)",
+                  }}
+                >
+                  <Zap size={28} color="#eab308" />
+                </div>
+                <h3 style={{ fontSize: "1.25rem", marginBottom: "8px", color: "var(--text-1)" }}>
+                  Select Local Video to Broadcast
+                </h3>
+                <p style={{ color: "var(--text-2)", maxWidth: 420, fontSize: "0.875rem", marginBottom: "var(--sp-5)", lineHeight: 1.5 }}>
+                  Choose the video file ({room.movieName || room.name}) from your device to begin direct peer-to-peer streaming to room viewers.
+                </p>
+                <input
+                  type="file"
+                  ref={filePickerRef}
+                  accept="video/*,.mp4,.mkv,.webm,.mov"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) setLocalFile(file);
+                  }}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={() => filePickerRef.current?.click()}
+                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  <Upload size={16} /> Choose File & Begin Broadcast
+                </button>
+              </div>
+            )}
+
             <VideoPlayer
-              src={videoSrc}
+              src={isP2P ? localBlobUrl : videoSrc}
+              streamObject={isP2P && !isHost ? remoteStream : null}
+              isP2P={isP2P}
+              p2pStatus={{ connectionState, viewersCount: connectedViewersCount }}
+              onStreamReady={isP2P && isHost ? setLocalStream : null}
               isHost={isHost}
               wsMsg={lastWsMsg}
               initialTime={room?.currentTime || 0}

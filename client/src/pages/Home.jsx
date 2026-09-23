@@ -21,6 +21,7 @@ import {
   AlertCircle,
   ArrowRight,
   Info,
+  Zap,
 } from 'lucide-react';
 
 export default function Home() {
@@ -359,9 +360,30 @@ export default function Home() {
               {filteredRooms.map((r) => (
                 <div key={r.id} className="room-card">
                   <div className="room-card-header">
-                    <span className="room-card-title" title={r.name}>
-                      {r.name}
-                    </span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                      <span className="room-card-title" title={r.name}>
+                        {r.name}
+                      </span>
+                      {r.streamType === "p2p" && (
+                        <span
+                          className="badge"
+                          style={{
+                            background: "rgba(234, 179, 8, 0.12)",
+                            color: "#eab308",
+                            border: "1px solid rgba(234, 179, 8, 0.3)",
+                            fontSize: "0.625rem",
+                            padding: "1px 5px",
+                            flexShrink: 0,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 3,
+                          }}
+                        >
+                          <Zap size={9} />
+                          P2P
+                        </span>
+                      )}
+                    </div>
                     <span className="status-indicator">
                       {r.usersCount} {r.usersCount === 1 ? 'member' : 'members'}
                     </span>

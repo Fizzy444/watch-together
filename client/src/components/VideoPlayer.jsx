@@ -10,6 +10,7 @@ import {
   RotateCcw,
   RotateCw,
   ShieldAlert,
+  Zap,
 } from 'lucide-react';
 
 // Sync thresholds (seconds)
@@ -27,6 +28,10 @@ function formatTime(s) {
 
 export default function VideoPlayer({
   src,
+  streamObject = null,
+  isP2P = false,
+  p2pStatus = null,
+  onStreamReady = null,
   isHost,
   wsMsg,
   initialTime = 0,
@@ -77,6 +82,23 @@ export default function VideoPlayer({
     });
   }, [bumpControls]);
   const [hostReconnecting, setHostReconnecting] = useState(false);
+
+  // WebRTC remote streamObject attachment (Viewer in P2P mode)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (streamObject) {
+      console.log("[VideoPlayer] Attaching WebRTC streamObject");
+      video.srcObject = streamObject;
+      video.play().catch((err) => {
+        console.warn("[VideoPlayer] Autoplay prevented for WebRTC stream:", err);
+      });
+      return () => {
+        video.srcObject = null;
+      };
+    }
+  }, [streamObject]);
 
   // Play-to-pause catchup for lagging viewers
   const pendingPauseTarget = useRef(null);
@@ -169,6 +191,17 @@ export default function VideoPlayer({
 
     const onLoadedMetadata = () => {
       setDuration(video.duration);
+      if (isHostRef.current && onStreamReady) {
+        try {
+          const stream = video.captureStream ? video.captureStream() : (video.mozCaptureStream ? video.mozCaptureStream() : null);
+          if (stream) {
+            console.log("[VideoPlayer] Local stream captured via captureStream");
+            onStreamReady(stream);
+          }
+        } catch (err) {
+          console.warn("[VideoPlayer] captureStream failed:", err);
+        }
+      }
       if (!hasInitializedTime.current) {
         if (pendingInitialTime.current > 0) {
           video.currentTime = pendingInitialTime.current;
@@ -559,6 +592,88 @@ export default function VideoPlayer({
           cursor: isHost ? 'pointer' : 'default',
         }}
       />
+
+      {/* P2P Badges & Overlays */}
+      {isP2P && isHost && (
+        <div
+          style={{
+            position: "absolute",
+            top: "var(--sp-4)",
+            left: "var(--sp-4)",
+            zIndex: 10,
+            background: "rgba(0, 0, 0, 0.75)",
+            border: "1px solid rgba(16, 185, 129, 0.4)",
+            borderRadius: "var(--r-full)",
+            padding: "5px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            color: "#10b981",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            backdropFilter: "blur(8px)",
+            pointerEvents: "none",
+          }}
+        >
+          <Zap size={13} />
+          <span>Broadcasting P2P • {p2pStatus?.viewersCount || 0} Viewer{p2pStatus?.viewersCount === 1 ? "" : "s"}</span>
+        </div>
+      )}
+
+      {isP2P && !isHost && streamObject && (
+        <div
+          style={{
+            position: "absolute",
+            top: "var(--sp-4)",
+            left: "var(--sp-4)",
+            zIndex: 10,
+            background: "rgba(0, 0, 0, 0.75)",
+            border: "1px solid rgba(59, 130, 246, 0.4)",
+            borderRadius: "var(--r-full)",
+            padding: "5px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            color: "#60a5fa",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            backdropFilter: "blur(8px)",
+            pointerEvents: "none",
+          }}
+        >
+          <Zap size={13} />
+          <span>Live P2P Stream</span>
+        </div>
+      )}
+
+      {isP2P && !isHost && !streamObject && (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 12,
+            background: "rgba(10, 10, 10, 0.92)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "12px",
+          }}
+        >
+          <Loader2 className="spinner" size={36} color="var(--primary)" />
+          <div style={{ fontSize: "0.9375rem", fontWeight: 600, color: "var(--text-1)" }}>
+            {p2pStatus?.connectionState === "connecting"
+              ? "Connecting to Host P2P Stream..."
+              : "Waiting for Host to begin broadcast..."}
+          </div>
+          <div style={{ fontSize: "0.8125rem", color: "var(--text-3)" }}>
+            Encrypted direct device-to-device WebRTC
+          </div>
+        </div>
+      )}
 
       {/* Host Reconnecting Banner (guests only) */}
       {hostReconnecting && !isHost && (

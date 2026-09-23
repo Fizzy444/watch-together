@@ -199,6 +199,47 @@ export function handleConnection(ws, req) {
         break;
       }
 
+      case 'webrtc_ready': {
+        // Viewer signals they are ready to receive WebRTC stream
+        const hostUser = currentRoom.users.find((u) => u.id === currentRoom.hostId || u.isHost);
+        if (hostUser && hostUser.ws && hostUser.ws.readyState === 1 && hostUser.id !== clientId) {
+          hostUser.ws.send(JSON.stringify({
+            type: 'webrtc_ready',
+            senderId: clientId,
+            senderName: userName,
+          }));
+        }
+        break;
+      }
+
+      case 'webrtc_signal': {
+        // Relays SDP offer/answer or ICE candidate to a specific target peer
+        const targetId = msg.targetUserId;
+        if (!targetId) return;
+        const targetUser = currentRoom.users.find((u) => u.id === targetId);
+        if (targetUser && targetUser.ws && targetUser.ws.readyState === 1) {
+          targetUser.ws.send(JSON.stringify({
+            type: 'webrtc_signal',
+            senderId: clientId,
+            senderName: userName,
+            signal: msg.signal,
+          }));
+        }
+        break;
+      }
+
+      case 'webrtc_host_stream_status': {
+        if (isHost) {
+          currentRoom.isBroadcasting = Boolean(msg.isBroadcasting);
+          broadcast(currentRoomId, {
+            type: 'webrtc_host_stream_status',
+            isBroadcasting: currentRoom.isBroadcasting,
+            movieName: msg.movieName || currentRoom.movieName,
+          }, clientId);
+        }
+        break;
+      }
+
       case 'close_room': {
         if (!isHost) {
           ws.send(JSON.stringify({ type: 'error', message: 'Only the host can close the room' }));
@@ -255,6 +296,7 @@ export function handleConnection(ws, req) {
     const r = removeUser(currentRoomId, clientId, ws);
     if (r) {
       broadcast(currentRoomId, { type: 'user_left', userId: clientId, userName });
+      broadcast(currentRoomId, { type: 'webrtc_peer_disconnected', peerId: clientId });
       if (r.users.length === 0) {
         stopSyncTick(currentRoomId);
       }

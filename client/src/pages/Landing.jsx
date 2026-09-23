@@ -641,6 +641,40 @@ export default function Landing() {
             </p>
           </div>
 
+          {/* Card: WebRTC P2P */}
+          <div
+            style={{
+              background: "var(--bg-card)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-lg)",
+              padding: "var(--sp-6)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--sp-3)",
+            }}
+          >
+            <div
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: "var(--r-md)",
+                background: "rgba(59, 130, 246, 0.15)",
+                color: "#60a5fa",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Radio size={22} />
+            </div>
+            <h3 style={{ fontSize: "1.125rem", fontWeight: 600, margin: 0 }}>
+              Device-to-Device WebRTC
+            </h3>
+            <p style={{ fontSize: "0.875rem", color: "var(--text-2)", lineHeight: 1.6, margin: 0 }}>
+              Broadcast any movie stored locally on your laptop or phone directly to your friends. Zero upload wait time, 0 server bandwidth, and end-to-end encrypted.
+            </p>
+          </div>
+
           {/* Card 4 */}
           <div
             style={{
