@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getMovies, getActiveRooms } from '../api/index.js';
+import { getProfileName, saveProfileName } from '../utils/profile.js';
 import MovieCard from '../components/MovieCard.jsx';
 import UploadZone from '../components/UploadZone.jsx';
 import CreateRoomModal from '../components/CreateRoomModal.jsx';
+import ProfileBadge from '../components/ProfileBadge.jsx';
+import ProfileModal from '../components/ProfileModal.jsx';
 import {
   PlaySquare,
   Plus,
   Search,
   LogIn,
-  Users,
   Film,
   Radio,
   Loader2,
@@ -24,6 +26,10 @@ export default function Home() {
   const [loadingMovies, setLoadingMovies] = useState(true);
   const [loadingRooms, setLoadingRooms] = useState(true);
   const [error, setError] = useState('');
+
+  // Profile state
+  const [profileName, setProfileName] = useState(getProfileName);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   // Search & Direct Join state
   const [searchQuery, setSearchQuery] = useState('');
@@ -58,12 +64,15 @@ export default function Home() {
   useEffect(() => {
     fetchMoviesList();
     fetchRoomsList();
-    // Poll rooms every 6 seconds to keep live directory fresh
     const interval = setInterval(fetchRoomsList, 6000);
     return () => clearInterval(interval);
   }, [fetchMoviesList, fetchRoomsList]);
 
   function handleOpenCreateModal(movie = null) {
+    if (!profileName) {
+      setIsProfileModalOpen(true);
+      return;
+    }
     setPreselectedMovie(movie);
     setIsModalOpen(true);
   }
@@ -72,7 +81,24 @@ export default function Home() {
     e.preventDefault();
     const code = directCode.trim();
     if (!code) return;
+    if (!profileName) {
+      setIsProfileModalOpen(true);
+      return;
+    }
     navigate(`/watch/${code}`);
+  }
+
+  function handleJoinRoom(roomId) {
+    if (!profileName) {
+      setIsProfileModalOpen(true);
+      return;
+    }
+    navigate(`/watch/${roomId}`);
+  }
+
+  function handleProfileSave(newName) {
+    saveProfileName(newName);
+    setProfileName(newName);
   }
 
   // Filtered rooms based on search
@@ -125,14 +151,22 @@ export default function Home() {
           </div>
         </div>
 
-        <button
-          className="btn btn-primary"
-          onClick={() => handleOpenCreateModal()}
-          style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}
-        >
-          <Plus size={16} />
-          Create Room
-        </button>
+        {/* Header Right Actions: Profile Badge + Create Room */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
+          <ProfileBadge
+            name={profileName}
+            onEdit={() => setIsProfileModalOpen(true)}
+          />
+
+          <button
+            className="btn btn-primary"
+            onClick={() => handleOpenCreateModal()}
+            style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}
+          >
+            <Plus size={16} />
+            Create Room
+          </button>
+        </div>
       </header>
 
       {/* Main Content Grid */}
@@ -278,7 +312,7 @@ export default function Home() {
                     <span>Host: {r.hostName}</span>
                     <button
                       className="btn btn-secondary btn-sm"
-                      onClick={() => navigate(`/watch/${r.id}`)}
+                      onClick={() => handleJoinRoom(r.id)}
                       style={{ padding: '0 var(--sp-3)' }}
                     >
                       Join <ArrowRight size={13} style={{ marginLeft: 4 }} />
@@ -324,7 +358,7 @@ export default function Home() {
             </div>
           ) : movies.length === 0 ? (
             <div className="card" style={{ padding: 'var(--sp-8)', textAlign: 'center', color: 'var(--text-2)' }}>
-              <Film size={32} style={{ margin: '0 auto var(--sp-3)', opacity: 0.4 }} />
+              <Film size={32} style={{ margin: '0 auto var(--sp-2)', opacity: 0.4 }} />
               <p style={{ fontWeight: 500, color: 'var(--text-1)' }}>Your library is empty</p>
               <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)' }}>Upload a video file below to get started.</p>
             </div>
@@ -357,6 +391,14 @@ export default function Home() {
         movies={movies}
         preselectedMovie={preselectedMovie}
         onMovieUploaded={setMovies}
+      />
+
+      {/* Profile Modal */}
+      <ProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        currentName={profileName}
+        onSave={handleProfileSave}
       />
     </div>
   );

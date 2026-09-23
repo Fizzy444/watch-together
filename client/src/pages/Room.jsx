@@ -3,10 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getRoom, getStreamStatus } from '../api/index.js';
 import { useWebSocket, getSessionClientId } from '../hooks/useWebSocket.js';
 import { useRoom } from '../hooks/useRoom.js';
+import { getProfileName, saveProfileName } from '../utils/profile.js';
 import VideoPlayer from '../components/VideoPlayer.jsx';
 import UserList from '../components/UserList.jsx';
-import RoomInfo from '../components/RoomInfo.jsx';
 import ChatBox from '../components/ChatBox.jsx';
+import ProfileBadge from '../components/ProfileBadge.jsx';
+import ProfileModal from '../components/ProfileModal.jsx';
 import {
   ArrowLeft,
   Loader2,
@@ -15,33 +17,32 @@ import {
   Crown,
   MessageSquare,
   Users,
-  Info,
+  Link2,
+  Check,
+  Keyboard,
+  X,
 } from 'lucide-react';
-
-function getUserName() {
-  let name = sessionStorage.getItem('wt_username');
-  if (!name) {
-    name = prompt('Enter your display name:', 'Host') || 'Host';
-    name = name.trim() || 'Host';
-    sessionStorage.setItem('wt_username', name);
-  }
-  return name;
-}
 
 export default function Room() {
   const { roomId } = useParams();
   const navigate = useNavigate();
-  const [userName] = useState(getUserName);
+
+  // Profile state — NO default 'Host' or 'Guest' name!
+  const [userName, setUserName] = useState(getProfileName);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(!getProfileName());
   const [myUserId] = useState(getSessionClientId);
+
   const [streamReady, setStreamReady] = useState(false);
   const [error, setError] = useState('');
   const [lastWsMsg, setLastWsMsg] = useState(null);
   const [toasts, setToasts] = useState([]);
   const pollRef = useRef(null);
 
-  // Sidebar tab state: 'chat' | 'members' | 'info'
+  // Clean Sidebar state: 'chat' | 'members'
   const [activeTab, setActiveTab] = useState('chat');
   const [unreadChat, setUnreadChat] = useState(0);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   const [initialRoom, setInitialRoom] = useState(null);
 
@@ -86,7 +87,12 @@ export default function Room() {
     [applyMessage, myUserId]
   );
 
-  const { connected, send } = useWebSocket(roomId, userName, handleMessage);
+  // Only connect WebSocket once user has set their name
+  const { connected, send } = useWebSocket(
+    roomId,
+    userName || 'Guest',
+    handleMessage
+  );
 
   useEffect(() => {
     if (streamReady) return;
@@ -106,6 +112,31 @@ export default function Room() {
     const id = Date.now() + Math.random();
     setToasts((prev) => [...prev, { id, msg, type }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
+  }
+
+  function handleProfileSave(newName) {
+    saveProfileName(newName);
+    setUserName(newName);
+    // Broadcast name change to room peers
+    send('update_name', { name: newName });
+    addToast(`Display name set to ${newName}`);
+  }
+
+  async function copyRoomLink() {
+    const url = `${window.location.origin}/watch/${roomId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const el = document.createElement('textarea');
+      el.value = url;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+    setCopiedLink(true);
+    addToast('Room link copied to clipboard');
+    setTimeout(() => setCopiedLink(false), 2000);
   }
 
   // Robust host detection
@@ -303,79 +334,156 @@ export default function Room() {
         </div>
       </div>
 
-      {/* Right Sidebar with Chat & Members Tabs */}
-      <div className="room-sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
-        {/* Navigation Tabs */}
-        <div className="sidebar-tabs">
-          <button
-            className={`sidebar-tab ${activeTab === 'chat' ? 'active' : ''}`}
-            onClick={() => handleTabSelect('chat')}
-          >
-            <MessageSquare size={15} />
-            Chat
-            {unreadChat > 0 && activeTab !== 'chat' && (
-              <span
-                style={{
-                  background: 'var(--primary)',
-                  color: 'var(--primary-text)',
-                  fontSize: '0.65rem',
-                  fontWeight: 700,
-                  borderRadius: 'var(--r-full)',
-                  padding: '0 5px',
-                  height: 16,
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                {unreadChat}
-              </span>
-            )}
-          </button>
+      {/* Clean Right Sidebar */}
+      <div className="room-sidebar clean-sidebar">
+        {/* Clean Segmented Header Tabs */}
+        <div className="clean-sidebar-header">
+          <div className="sidebar-tabs" style={{ border: 'none', background: 'transparent', flex: 1 }}>
+            <button
+              className={`sidebar-tab ${activeTab === 'chat' ? 'active' : ''}`}
+              onClick={() => handleTabSelect('chat')}
+              style={{ borderRadius: 'var(--r-md)', padding: '6px 12px' }}
+            >
+              <MessageSquare size={14} />
+              Chat
+              {unreadChat > 0 && activeTab !== 'chat' && (
+                <span
+                  style={{
+                    background: 'var(--primary)',
+                    color: 'var(--primary-text)',
+                    fontSize: '0.65rem',
+                    fontWeight: 700,
+                    borderRadius: 'var(--r-full)',
+                    padding: '0 5px',
+                    height: 16,
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  {unreadChat}
+                </span>
+              )}
+            </button>
 
-          <button
-            className={`sidebar-tab ${activeTab === 'members' ? 'active' : ''}`}
-            onClick={() => handleTabSelect('members')}
-          >
-            <Users size={15} />
-            Members
-            <span className="sidebar-tab-badge">{room.users?.length || 0}</span>
-          </button>
-
-          <button
-            className={`sidebar-tab ${activeTab === 'info' ? 'active' : ''}`}
-            onClick={() => handleTabSelect('info')}
-          >
-            <Info size={15} />
-            Info
-          </button>
+            <button
+              className={`sidebar-tab ${activeTab === 'members' ? 'active' : ''}`}
+              onClick={() => handleTabSelect('members')}
+              style={{ borderRadius: 'var(--r-md)', padding: '6px 12px' }}
+            >
+              <Users size={14} />
+              Members
+              <span className="sidebar-tab-badge">{room.users?.length || 0}</span>
+            </button>
+          </div>
         </div>
 
-        {/* Tab 1: Live Chat */}
-        {activeTab === 'chat' && (
-          <div style={{ flex: 1, minHeight: 0 }}>
+        {/* Clean Sidebar Content Body */}
+        <div className="clean-sidebar-body">
+          {activeTab === 'chat' ? (
             <ChatBox
               messages={room.messages || []}
               onSendMessage={handleSendMessage}
               currentUserId={myUserId}
               hostId={room.hostId}
             />
-          </div>
-        )}
+          ) : (
+            <div style={{ padding: 'var(--sp-4)', flex: 1, overflowY: 'auto' }}>
+              <UserList users={room.users} hostId={room.hostId} currentUserId={myUserId} />
+            </div>
+          )}
+        </div>
 
-        {/* Tab 2: Members List */}
-        {activeTab === 'members' && (
-          <div className="sidebar-section" style={{ flex: 1, overflowY: 'auto' }}>
-            <UserList users={room.users} hostId={room.hostId} currentUserId={myUserId} />
-          </div>
-        )}
+        {/* Clean Sidebar Footer: Profile Widget + Action Buttons */}
+        <div className="clean-sidebar-footer">
+          <ProfileBadge
+            name={userName}
+            onEdit={() => setIsProfileModalOpen(true)}
+          />
 
-        {/* Tab 3: Session Link & Shortcuts */}
-        {activeTab === 'info' && (
-          <div className="sidebar-section" style={{ flex: 1, overflowY: 'auto' }}>
-            <RoomInfo roomId={roomId} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+            <button
+              className="sidebar-action-btn"
+              onClick={copyRoomLink}
+              title={copiedLink ? 'Link copied!' : 'Copy invite link'}
+            >
+              {copiedLink ? <Check size={14} color="var(--success)" /> : <Link2 size={14} />}
+            </button>
+
+            <button
+              className="sidebar-action-btn"
+              onClick={() => setShowShortcuts((v) => !v)}
+              title="Keyboard shortcuts"
+            >
+              <Keyboard size={14} />
+            </button>
           </div>
-        )}
+        </div>
       </div>
+
+      {/* Keyboard Shortcuts Popover Modal */}
+      {showShortcuts && (
+        <div className="modal-backdrop" onClick={() => setShowShortcuts(false)}>
+          <div
+            className="modal-content"
+            style={{ maxWidth: 360 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                <Keyboard size={16} />
+                <h3 style={{ fontSize: '0.9375rem', margin: 0 }}>Shortcuts</h3>
+              </div>
+              <button className="btn-icon" onClick={() => setShowShortcuts(false)}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ padding: 'var(--sp-4)', gap: 'var(--sp-2)' }}>
+              {[
+                { key: 'Space / K', desc: 'Play / Pause (Host)' },
+                { key: '← / →', desc: 'Skip 5s (Host)' },
+                { key: 'J / L', desc: 'Skip 10s (Host)' },
+                { key: '↑ / ↓', desc: 'Volume' },
+                { key: 'M', desc: 'Mute / Unmute' },
+                { key: 'F', desc: 'Toggle Fullscreen' },
+              ].map((s) => (
+                <div
+                  key={s.key}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: '0.8125rem',
+                  }}
+                >
+                  <kbd
+                    style={{
+                      background: 'var(--bg)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--r-sm)',
+                      padding: '2px 6px',
+                      fontFamily: 'monospace',
+                      fontSize: '0.75rem',
+                      color: 'var(--text-1)',
+                    }}
+                  >
+                    {s.key}
+                  </kbd>
+                  <span style={{ color: 'var(--text-2)' }}>{s.desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Profile Modal */}
+      <ProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        currentName={userName}
+        onSave={handleProfileSave}
+        isMandatory={!userName}
+      />
 
       {/* Floating Notifications */}
       <div className="toast-container">

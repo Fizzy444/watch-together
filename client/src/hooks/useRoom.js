@@ -47,6 +47,16 @@ export function useRoom(initialRoom) {
         });
         break;
 
+      case 'user_updated':
+        setRoom((r) => {
+          if (!r) return r;
+          return {
+            ...r,
+            users: r.users.map((u) => (u.id === msg.user.id ? { ...u, name: msg.user.name } : u)),
+          };
+        });
+        break;
+
       case 'user_left':
         setRoom((r) => {
           if (!r) return r;

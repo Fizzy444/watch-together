@@ -47,7 +47,7 @@ function stopSyncTick(roomId) {
 export function handleConnection(ws, req) {
   const params = new URL(req.url, 'http://localhost').searchParams;
   const roomId = params.get('room');
-  const userName = (params.get('name') || 'Anonymous').trim();
+  let userName = (params.get('name') || '').trim() || 'Guest';
   const clientId = params.get('clientId') || crypto.randomUUID();
 
   if (!roomId) {
@@ -113,6 +113,21 @@ export function handleConnection(ws, req) {
     const isHost = currentRoom.hostId === clientId || currentRoom.users.some((u) => u.id === clientId && u.isHost);
 
     switch (msg.type) {
+      case 'update_name': {
+        const newName = typeof msg.name === 'string' ? msg.name.trim() : '';
+        if (!newName) return;
+        userName = newName;
+        const userInRoom = currentRoom.users.find((u) => u.id === clientId);
+        if (userInRoom) {
+          userInRoom.name = newName;
+          broadcast(currentRoomId, {
+            type: 'user_updated',
+            user: { id: clientId, name: newName, isHost: userInRoom.isHost },
+          });
+        }
+        break;
+      }
+
       case 'chat': {
         const text = typeof msg.text === 'string' ? msg.text.trim() : '';
         if (!text) return;
