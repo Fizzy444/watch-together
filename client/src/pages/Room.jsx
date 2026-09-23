@@ -24,6 +24,8 @@ import {
   Power,
   Zap,
   Upload,
+  PanelRightClose,
+  PanelRightOpen,
 } from 'lucide-react';
 
 export default function Room() {
@@ -32,7 +34,7 @@ export default function Room() {
   const location = useLocation();
 
   // Local File & P2P Broadcast State
-  const [localFile, setLocalFile] = useState(() => location.state?.localFile || window.__wt_p2p_file || null);
+  const [localFile, setLocalFile] = useState(() => window.__wt_p2p_file || null);
   const [localStream, setLocalStream] = useState(null);
   const filePickerRef = useRef(null);
 
@@ -50,6 +52,11 @@ export default function Room() {
   // Clean Sidebar state: 'chat' | 'members'
   const [activeTab, setActiveTab] = useState('chat');
   const [unreadChat, setUnreadChat] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const sidebarOpenRef = useRef(sidebarOpen);
+  sidebarOpenRef.current = sidebarOpen;
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   const [copiedLink, setCopiedLink] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -87,14 +94,11 @@ export default function Room() {
         return;
       }
 
-      // If a chat message arrives while on another tab, show unread badge
+      // If a chat message arrives while on another tab or sidebar collapsed, show unread badge
       if (msg.type === 'chat') {
-        setActiveTab((currentTab) => {
-          if (currentTab !== 'chat') {
-            setUnreadChat((prev) => prev + 1);
-          }
-          return currentTab;
-        });
+        if (!sidebarOpenRef.current || activeTabRef.current !== 'chat') {
+          setUnreadChat((prev) => prev + 1);
+        }
       }
 
       setLastWsMsg(msg);
@@ -112,18 +116,22 @@ export default function Room() {
 
   const isP2P = Boolean(room?.streamType === 'p2p' || room?.movie === 'p2p-stream');
 
+  // Precise host detection (User is host ONLY if matching hostId, creatorId, or user.isHost)
+  const isHost = Boolean(
+    room && (
+      (room.hostId && room.hostId === myUserId) ||
+      (room.creatorId && room.creatorId === myUserId) ||
+      (room.users && room.users.find((u) => u.id === myUserId)?.isHost)
+    )
+  );
+
   // WebRTC Peer-to-Peer Engine
   const {
     remoteStream,
     connectionState,
     connectedViewersCount,
   } = useWebRTC({
-    isHost: Boolean(
-      (room?.hostId && room.hostId === myUserId) ||
-      (room?.users?.find((u) => u.id === myUserId)?.isHost) ||
-      (room?.users?.length === 1) ||
-      (room?.users && !room.users.some((u) => u.isHost))
-    ),
+    isHost,
     isP2P,
     localStream,
     send,
@@ -220,13 +228,7 @@ export default function Room() {
     setTimeout(() => setCopiedLink(false), 2000);
   }
 
-  // Robust host detection
-  const isHost = Boolean(
-    (room?.hostId && room.hostId === myUserId) ||
-    (room?.users?.find((u) => u.id === myUserId)?.isHost) ||
-    (room?.users?.length === 1) ||
-    (room?.users && !room.users.some((u) => u.isHost))
-  );
+// Host state already computed above
 
   const hostUser = room?.users?.find((u) => u.isHost || u.id === room?.hostId);
   const hostName = hostUser?.name || 'Host';
@@ -275,6 +277,28 @@ export default function Room() {
       setUnreadChat(0);
     }
   }
+
+  function toggleSidebar() {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      if (next && activeTab === 'chat') {
+        setUnreadChat(0);
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName)) return;
+      if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeTab]);
 
   if (error) {
     return (
@@ -397,6 +421,19 @@ export default function Room() {
             <span>{copiedLink ? 'Copied!' : 'Invite Link'}</span>
           </button>
 
+          {/* Toggle Sidebar Button (Cinema Mode) */}
+          <button
+            className={`btn btn-sm room-topbar-btn ${sidebarOpen ? "btn-ghost" : "btn-secondary"}`}
+            onClick={toggleSidebar}
+            title={sidebarOpen ? 'Collapse sidebar (Cinema Mode)' : 'Show Chat & Members'}
+          >
+            {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+            <span className="room-topbar-btn-label">{sidebarOpen ? 'Hide Chat' : 'Chat'}</span>
+            {!sidebarOpen && unreadChat > 0 && (
+              <span className="room-topbar-badge">{unreadChat}</span>
+            )}
+          </button>
+
           {/* Stop Room (Host) or Leave Room */}
           {isHost ? (
             <button
@@ -482,7 +519,7 @@ export default function Room() {
                 <input
                   type="file"
                   ref={filePickerRef}
-                  accept="video/*,.mp4,.mkv,.webm,.mov"
+                  accept=".mp4,.mkv,.webm,.mov,.avi"
                   style={{ display: "none" }}
                   onChange={(e) => {
                     const file = e.target.files?.[0];
@@ -519,17 +556,16 @@ export default function Room() {
         </div>
 
         {/* Clean Right Sidebar */}
-        <div className="room-sidebar clean-sidebar">
+        <div className={`room-sidebar clean-sidebar ${sidebarOpen ? "" : "collapsed"}`}>
           {/* Clean Segmented Header Tabs */}
           <div className="clean-sidebar-header">
             <div className="sidebar-tabs" style={{ border: 'none', background: 'transparent', flex: 1, padding: 0 }}>
               <button
                 className={`sidebar-tab ${activeTab === 'chat' ? 'active' : ''}`}
                 onClick={() => handleTabSelect('chat')}
-                style={{ borderRadius: 'var(--r-md)', padding: '6px 12px' }}
               >
-                <MessageSquare size={14} />
-                Chat
+                <MessageSquare size={13} />
+                <span>Chat</span>
                 {unreadChat > 0 && activeTab !== 'chat' && (
                   <span
                     style={{
@@ -552,14 +588,20 @@ export default function Room() {
               <button
                 className={`sidebar-tab ${activeTab === 'members' ? 'active' : ''}`}
                 onClick={() => handleTabSelect('members')}
-                style={{ borderRadius: 'var(--r-md)', padding: '6px 12px' }}
               >
-                <Users size={14} />
-                Members
+                <Users size={13} />
+                <span>Members</span>
                 <span className="sidebar-tab-badge">{room.users?.length || 0}</span>
               </button>
             </div>
 
+            <button
+              className="sidebar-action-btn sidebar-collapse-btn"
+              onClick={() => setSidebarOpen(false)}
+              title="Collapse sidebar (Cinema Mode)"
+            >
+              <PanelRightClose size={13} />
+            </button>
             <button
               className="sidebar-action-btn sidebar-shortcuts-btn"
               onClick={() => setShowShortcuts((v) => !v)}
@@ -579,7 +621,7 @@ export default function Room() {
                 hostId={room.hostId}
               />
             ) : (
-              <div style={{ padding: 'var(--sp-4)', flex: 1, overflowY: 'auto' }}>
+              <div style={{ padding: '8px 10px', flex: 1, overflowY: 'auto' }}>
                 <UserList users={room.users} hostId={room.hostId} currentUserId={myUserId} />
               </div>
             )}
@@ -606,6 +648,7 @@ export default function Room() {
             </div>
             <div className="modal-body" style={{ padding: 'var(--sp-4)', gap: 'var(--sp-2)' }}>
               {[
+                { key: 'C', desc: 'Toggle Sidebar / Cinema Mode' },
                 { key: 'Space / K', desc: 'Play / Pause (Host)' },
                 { key: '← / →', desc: 'Skip 5s (Host)' },
                 { key: 'J / L', desc: 'Skip 10s (Host)' },

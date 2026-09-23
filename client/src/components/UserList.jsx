@@ -8,12 +8,12 @@ export default function UserList({ users = [], hostId, currentUserId }) {
     <div>
       <div
         className="sidebar-title"
-        style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}
+        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
       >
-        <Users size={14} />
+        <Users size={12} />
         Members ({uniqueUsers.length})
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
         {uniqueUsers.map((user) => {
           const isMe = currentUserId && user.id === currentUserId;
           const isUserHost = user.isHost || user.id === hostId;
@@ -27,7 +27,7 @@ export default function UserList({ users = [], hostId, currentUserId }) {
                 <span className="user-name">
                   {user.name}
                   {isMe && (
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-3)', marginLeft: 6 }}>
+                    <span style={{ fontSize: '0.6875rem', color: 'var(--text-3)', marginLeft: 4 }}>
                       (You)
                     </span>
                   )}
@@ -35,7 +35,7 @@ export default function UserList({ users = [], hostId, currentUserId }) {
                 {isUserHost && (
                   <span
                     className="badge badge-host"
-                    style={{ fontSize: '0.65rem', padding: '1px 6px' }}
+                    style={{ fontSize: '0.625rem', padding: '1px 5px' }}
                   >
                     Host
                   </span>

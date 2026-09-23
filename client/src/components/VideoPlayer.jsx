@@ -89,16 +89,53 @@ export default function VideoPlayer({
     if (!video) return;
 
     if (streamObject) {
-      console.log("[VideoPlayer] Attaching WebRTC streamObject");
+      console.log("[VideoPlayer] Attaching WebRTC streamObject to video element");
       video.srcObject = streamObject;
-      video.play().catch((err) => {
-        console.warn("[VideoPlayer] Autoplay prevented for WebRTC stream:", err);
-      });
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn("[VideoPlayer] Autoplay prevented by browser, muting to allow initial render:", err);
+          video.muted = true;
+          setMuted(true);
+          video.play().catch(() => {});
+        });
+      }
       return () => {
         video.srcObject = null;
       };
     }
   }, [streamObject]);
+
+  // Host stream capture listener (triggers as soon as metadata/canplay/play is ready)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !onStreamReady || !isHost) return;
+
+    const tryCapture = () => {
+      if (video.readyState >= 1) {
+        try {
+          const stream = video.captureStream ? video.captureStream() : (video.mozCaptureStream ? video.mozCaptureStream() : null);
+          if (stream && stream.getTracks().length > 0) {
+            console.log("[VideoPlayer] Captured local host stream for P2P, tracks:", stream.getTracks().length);
+            onStreamReady(stream);
+          }
+        } catch (err) {
+          console.warn("[VideoPlayer] captureStream error:", err);
+        }
+      }
+    };
+
+    tryCapture();
+    video.addEventListener("loadedmetadata", tryCapture);
+    video.addEventListener("canplay", tryCapture);
+    video.addEventListener("play", tryCapture);
+
+    return () => {
+      video.removeEventListener("loadedmetadata", tryCapture);
+      video.removeEventListener("canplay", tryCapture);
+      video.removeEventListener("play", tryCapture);
+    };
+  }, [src, isHost, onStreamReady]);
 
   // Play-to-pause catchup for lagging viewers
   const pendingPauseTarget = useRef(null);
@@ -583,7 +620,7 @@ export default function VideoPlayer({
       <video
         ref={videoRef}
         playsInline
-        preload="auto"
+        preload="metadata"
         onClick={handlePlayPause}
         style={{
           width: '100%',

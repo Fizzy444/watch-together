@@ -35,6 +35,9 @@ export function useWebRTC({
   // Viewer: single RTCPeerConnection
   const viewerPcRef = useRef(null);
 
+  // Queue of viewers who signaled ready before localStream was captured
+  const pendingViewersRef = useRef(new Set());
+
   // Candidates queue before remoteDescription is ready
   const candidatesQueueRef = useRef(new Map());
 
@@ -53,8 +56,11 @@ export function useWebRTC({
 
   // HOST: Initiate WebRTC connection when viewer is ready
   const handleViewerReady = useCallback(async (viewerId) => {
-    if (!isHost || !localStreamRef.current) {
-      console.log("[WebRTC Host] Received ready, but no stream or not host yet.");
+    if (!isHost) return;
+
+    if (!localStreamRef.current) {
+      console.log(`[WebRTC Host] Received ready from ${viewerId}, but local stream not ready yet. Queuing...`);
+      pendingViewersRef.current.add(viewerId);
       return;
     }
 
@@ -93,10 +99,7 @@ export function useWebRTC({
         updateHostPeerCount();
       };
 
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: false,
-        offerToReceiveVideo: false
-      });
+      const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
       send("webrtc_signal", {
@@ -108,9 +111,18 @@ export function useWebRTC({
     }
   }, [isHost, send, updateHostPeerCount]);
 
-  // HOST: Update tracks if localStream changes while peers are already connected
+  // HOST: Process queued viewers and update tracks when localStream becomes available
   useEffect(() => {
     if (!isHost || !localStream) return;
+
+    // Process queued viewers who connected before host stream was ready
+    if (pendingViewersRef.current.size > 0) {
+      console.log(`[WebRTC Host] Fulfilling ${pendingViewersRef.current.size} pending viewer requests now that stream is ready`);
+      for (const viewerId of pendingViewersRef.current) {
+        handleViewerReady(viewerId);
+      }
+      pendingViewersRef.current.clear();
+    }
 
     for (const [viewerId, pc] of peersRef.current.entries()) {
       if (pc.signalingState !== "closed") {
@@ -130,7 +142,7 @@ export function useWebRTC({
     }
     // Broadcast status to room
     send("webrtc_host_stream_status", { isBroadcasting: true });
-  }, [isHost, localStream, send]);
+  }, [isHost, localStream, send, handleViewerReady]);
 
   // VIEWER: Signal readiness to host
   const requestStreamFromHost = useCallback(() => {
@@ -140,12 +152,21 @@ export function useWebRTC({
     send("webrtc_ready", {});
   }, [isHost, isP2P, connected, send]);
 
-  // Trigger stream request when entering room
+  // Trigger stream request when entering room, and keep re-requesting every 2.5s until connected
   useEffect(() => {
-    if (!isHost && isP2P && connected) {
-      requestStreamFromHost();
-    }
-  }, [isHost, isP2P, connected, requestStreamFromHost]);
+    if (isHost || !isP2P || !connected) return;
+
+    requestStreamFromHost();
+
+    const interval = setInterval(() => {
+      if (connectionState !== "connected") {
+        console.log("[WebRTC Viewer] Re-checking host stream availability...");
+        requestStreamFromHost();
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [isHost, isP2P, connected, connectionState, requestStreamFromHost]);
 
   // WebSocket Message Dispatcher for WebRTC
   useEffect(() => {
@@ -209,14 +230,16 @@ export function useWebRTC({
           const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
           viewerPcRef.current = pc;
 
-          const remoteMediaStream = new MediaStream();
           pc.ontrack = (event) => {
             console.log("[WebRTC Viewer] Received remote track:", event.track.kind);
             if (event.streams && event.streams[0]) {
               setRemoteStream(event.streams[0]);
             } else {
-              remoteMediaStream.addTrack(event.track);
-              setRemoteStream(remoteMediaStream);
+              setRemoteStream((prev) => {
+                const stream = prev || new MediaStream();
+                stream.addTrack(event.track);
+                return stream;
+              });
             }
             setConnectionState("connected");
           };

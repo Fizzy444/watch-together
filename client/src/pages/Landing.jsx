@@ -765,10 +765,10 @@ export default function Landing() {
               1
             </div>
             <h3 style={{ fontSize: '1.125rem', fontWeight: 600, margin: '0 0 var(--sp-2) 0' }}>
-              Choose or Upload Media
+              Choose Video on Your Device
             </h3>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-2)', lineHeight: 1.6, margin: 0 }}>
-              Pick movies from the pre-indexed media library or upload video files (.mp4, .mkv, .webm) directly. Thumbnails and metadata are generated automatically.
+              Select any video file (.mp4, .mkv, .webm, .mov) directly from your computer or phone. No upload waiting time and zero server storage.
             </p>
           </div>
 

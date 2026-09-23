@@ -1,15 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getMovies, getActiveRooms } from '../api/index.js';
+import { getActiveRooms } from '../api/index.js';
 import { getProfileName } from '../utils/profile.js';
 import { getStoredUser } from '../utils/auth.js';
-import MovieCard from '../components/MovieCard.jsx';
-import UploadZone from '../components/UploadZone.jsx';
 import CreateRoomModal from '../components/CreateRoomModal.jsx';
 import ProfileBadge from '../components/ProfileBadge.jsx';
-import AddMovieModal from '../components/AddMovieModal.jsx';
 import AuthModal from '../components/AuthModal.jsx';
-import { isMovieInUserLibrary, removeMovieFromUserLibrary } from '../utils/library.js';
 import {
   PlaySquare,
   Plus,
@@ -18,7 +14,6 @@ import {
   Film,
   Radio,
   Loader2,
-  AlertCircle,
   ArrowRight,
   Info,
   Zap,
@@ -26,11 +21,8 @@ import {
 
 export default function Home() {
   const navigate = useNavigate();
-  const [movies, setMovies] = useState([]);
   const [activeRooms, setActiveRooms] = useState([]);
-  const [loadingMovies, setLoadingMovies] = useState(true);
   const [loadingRooms, setLoadingRooms] = useState(true);
-  const [error, setError] = useState('');
 
   // Auth & Profile state (username is permanent)
   const [currentUser, setCurrentUser] = useState(getStoredUser);
@@ -38,98 +30,46 @@ export default function Home() {
     const user = getStoredUser();
     return user?.username || getProfileName();
   });
+
+  // Modal states
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState('signin');
 
-  // Search & Direct Join state
+  // Search & quick join states
   const [searchQuery, setSearchQuery] = useState('');
   const [directCode, setDirectCode] = useState('');
 
-  // Create Room modal state
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [preselectedMovie, setPreselectedMovie] = useState(null);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [libraryVersion, setLibraryVersion] = useState(0);
-
-  useEffect(() => {
-    const onLibChanged = () => setLibraryVersion((v) => v + 1);
-    window.addEventListener('wt-library-changed', onLibChanged);
-    return () => window.removeEventListener('wt-library-changed', onLibChanged);
-  }, []);
-
-  useEffect(() => {
-    const handleAuthChange = (e) => {
-      const u = e.detail?.user || null;
-      setCurrentUser(u);
-      if (u?.username) {
-        setProfileName(u.username);
-      }
-    };
-    window.addEventListener('wt-auth-changed', handleAuthChange);
-    return () => window.removeEventListener('wt-auth-changed', handleAuthChange);
-  }, []);
-
-  const myMovies = movies.filter((m) => isMovieInUserLibrary(m.filename, movies));
-
-  const fetchMoviesList = useCallback(async () => {
-    try {
-      const data = await getMovies();
-      setMovies(data);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoadingMovies(false);
-    }
-  }, []);
-
-  const fetchRoomsList = useCallback(async () => {
+  // Fetch active rooms list
+  const fetchRooms = useCallback(async () => {
     try {
       const data = await getActiveRooms();
       setActiveRooms(data);
-    } catch {
-      // Non-blocking error for rooms list
+    } catch (err) {
+      console.error('Failed to fetch rooms:', err);
     } finally {
       setLoadingRooms(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchMoviesList();
-    fetchRoomsList();
-    const interval = setInterval(fetchRoomsList, 6000);
+    fetchRooms();
+    const interval = setInterval(fetchRooms, 3500);
     return () => clearInterval(interval);
-  }, [fetchMoviesList, fetchRoomsList]);
+  }, [fetchRooms]);
 
-  function handleOpenCreateModal(movie = null) {
-    if (!profileName) {
-      setAuthModalMode('signin');
-      setAuthModalOpen(true);
-      return;
-    }
-    setPreselectedMovie(movie);
-    setIsModalOpen(true);
-  }
-
-  function handleDirectJoin(e) {
-    e.preventDefault();
-    const code = directCode.trim();
-    if (!code) return;
-    if (!profileName) {
-      setAuthModalMode('signin');
-      setAuthModalOpen(true);
-      return;
-    }
-    navigate(`/watch/${code}`);
-  }
-
-  function handleJoinRoom(roomId) {
-    if (!profileName) {
-      setAuthModalMode('signin');
-      setAuthModalOpen(true);
-      return;
-    }
-    navigate(`/watch/${roomId}`);
-  }
+  // Listen for auth changes
+  useEffect(() => {
+    const handleAuthChange = (e) => {
+      const user = e.detail?.user || null;
+      setCurrentUser(user);
+      if (user) {
+        setProfileName(user.username);
+      }
+    };
+    window.addEventListener('wt-auth-changed', handleAuthChange);
+    return () => window.removeEventListener('wt-auth-changed', handleAuthChange);
+  }, []);
 
   function handleAuthSuccess(user) {
     setCurrentUser(user);
@@ -145,59 +85,100 @@ export default function Home() {
     return (
       (r.name && r.name.toLowerCase().includes(q)) ||
       (r.movieName && r.movieName.toLowerCase().includes(q)) ||
-      (r.id && r.id.toLowerCase().includes(q)) ||
-      (r.hostName && r.hostName.toLowerCase().includes(q))
+      (r.hostName && r.hostName.toLowerCase().includes(q)) ||
+      r.id.toLowerCase().includes(q)
     );
   });
 
+  function handleOpenCreateModal() {
+    setIsModalOpen(true);
+  }
+
+  function handleJoinRoom(roomId) {
+    navigate(`/watch/${roomId}`);
+  }
+
+  function handleDirectJoin(e) {
+    e.preventDefault();
+    const clean = directCode.trim().toLowerCase();
+    if (clean) {
+      navigate(`/watch/${clean}`);
+    }
+  }
+
   return (
     <div className="container" style={{ paddingBottom: 'var(--sp-12)' }}>
-      {/* Top Header Bar */}
+      {/* Top Header */}
       <header
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          padding: 'var(--sp-6) 0 var(--sp-8)',
+          borderBottom: '1px solid var(--border)',
+          marginBottom: 'var(--sp-8)',
           flexWrap: 'wrap',
           gap: 'var(--sp-4)',
-          marginBottom: 'var(--sp-8)',
-          paddingBottom: 'var(--sp-4)',
-          borderBottom: '1px solid var(--border)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)' }}>
           <div
             style={{
-              width: 44,
-              height: 44,
-              background: 'var(--primary)',
-              color: 'var(--primary-text)',
+              width: 42,
+              height: 42,
               borderRadius: 'var(--r-md)',
+              background: 'linear-gradient(135deg, var(--primary) 0%, #a855f7 100%)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              boxShadow: '0 4px 14px rgba(99, 102, 241, 0.4)',
               cursor: 'pointer',
             }}
             onClick={() => navigate('/')}
-            title="Go to About page"
           >
-            <PlaySquare size={24} />
+            <PlaySquare size={22} color="#fff" />
           </div>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-              <h1 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>Watch Together</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
+              <h1
+                style={{
+                  fontSize: '1.25rem',
+                  fontWeight: 700,
+                  letterSpacing: '-0.02em',
+                  margin: 0,
+                  cursor: 'pointer',
+                }}
+                onClick={() => navigate('/')}
+              >
+                Watch Together
+              </h1>
+              <span
+                style={{
+                  fontSize: '0.6875rem',
+                  padding: '2px 8px',
+                  borderRadius: 'var(--r-full)',
+                  background: 'rgba(234, 179, 8, 0.12)',
+                  color: '#eab308',
+                  border: '1px solid rgba(234, 179, 8, 0.25)',
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                }}
+              >
+                <Zap size={10} />
+                P2P
+              </span>
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => navigate('/')}
-                style={{ padding: '2px 8px', fontSize: '0.75rem', color: 'var(--text-3)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
-                title="View About site & features"
+                style={{ fontSize: '0.75rem', color: 'var(--text-3)', padding: '2px 8px' }}
               >
-                <Info size={12} />
-                About
+                <Info size={13} style={{ marginRight: 4 }} /> About
               </button>
             </div>
             <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', margin: 0 }}>
-              Private synchronized video streaming
+              Direct device-to-device synchronized video streaming
             </p>
           </div>
         </div>
@@ -234,7 +215,7 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main Content Grid */}
+      {/* Main Content */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-8)' }}>
         {/* Quick Search & Join Bar */}
         <section
@@ -265,7 +246,7 @@ export default function Home() {
             <input
               type="text"
               className="input input-sm"
-              placeholder="Search active rooms by name or movie..."
+              placeholder="Search active rooms by name..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{ paddingLeft: 36, width: '100%' }}
@@ -297,7 +278,7 @@ export default function Home() {
           </form>
         </section>
 
-        {/* Section 1: Active Rooms */}
+        {/* Section: Active Rooms */}
         <section>
           <div
             style={{
@@ -336,23 +317,35 @@ export default function Home() {
             <div
               className="card"
               style={{
-                padding: 'var(--sp-8)',
+                padding: 'var(--sp-10) var(--sp-6)',
                 textAlign: 'center',
                 color: 'var(--text-2)',
                 background: 'var(--bg-card)',
               }}
             >
-              <Radio size={32} style={{ margin: '0 auto var(--sp-2)', opacity: 0.3 }} />
-              <p style={{ fontWeight: 500, color: 'var(--text-1)', marginBottom: 'var(--sp-1)' }}>
+              <div
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: '50%',
+                  background: 'rgba(99, 102, 241, 0.1)',
+                  color: 'var(--primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto var(--sp-3)',
+                }}
+              >
+                <Zap size={28} />
+              </div>
+              <p style={{ fontWeight: 600, color: 'var(--text-1)', fontSize: '1.0625rem', marginBottom: 'var(--sp-1)' }}>
                 {searchQuery ? 'No rooms match your search' : 'No active rooms right now'}
               </p>
-              <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', marginBottom: 'var(--sp-4)' }}>
-                {searchQuery
-                  ? 'Try searching with a different term or clear the filter.'
-                  : 'Start a watch session and invite your friends with a private link.'}
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-3)', maxWidth: 440, margin: '0 auto var(--sp-5)' }}>
+                Start a private watch party! Choose any local video file from your computer or phone and stream directly to your friends with 0 server uploads.
               </p>
-              <button className="btn btn-secondary btn-sm" onClick={() => handleOpenCreateModal()}>
-                <Plus size={14} /> Create Room
+              <button className="btn btn-primary" onClick={() => handleOpenCreateModal()}>
+                <Plus size={16} /> Create Watch Room
               </button>
             </div>
           ) : (
@@ -360,29 +353,27 @@ export default function Home() {
               {filteredRooms.map((r) => (
                 <div key={r.id} className="room-card">
                   <div className="room-card-header">
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                       <span className="room-card-title" title={r.name}>
                         {r.name}
                       </span>
-                      {r.streamType === "p2p" && (
-                        <span
-                          className="badge"
-                          style={{
-                            background: "rgba(234, 179, 8, 0.12)",
-                            color: "#eab308",
-                            border: "1px solid rgba(234, 179, 8, 0.3)",
-                            fontSize: "0.625rem",
-                            padding: "1px 5px",
-                            flexShrink: 0,
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 3,
-                          }}
-                        >
-                          <Zap size={9} />
-                          P2P
-                        </span>
-                      )}
+                      <span
+                        className="badge"
+                        style={{
+                          background: 'rgba(234, 179, 8, 0.12)',
+                          color: '#eab308',
+                          border: '1px solid rgba(234, 179, 8, 0.3)',
+                          fontSize: '0.625rem',
+                          padding: '1px 5px',
+                          flexShrink: 0,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 3,
+                        }}
+                      >
+                        <Zap size={9} />
+                        P2P
+                      </span>
                     </div>
                     <span className="status-indicator">
                       {r.usersCount} {r.usersCount === 1 ? 'member' : 'members'}
@@ -410,94 +401,31 @@ export default function Home() {
           )}
         </section>
 
-        {/* Section 2: Personal Media Library */}
-        <section>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 'var(--sp-4)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-              <Film size={16} />
-              <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>My Media Library</h3>
-              {!loadingMovies && myMovies.length > 0 && (
-                <span className="badge">{myMovies.length} {myMovies.length === 1 ? 'movie' : 'movies'}</span>
-              )}
-            </div>
-
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => setIsAddModalOpen(true)}
-              title="Add movies to your personal library"
-            >
-              <Plus size={13} /> Add Movie
-            </button>
+        {/* Fast Action Card */}
+        <section
+          style={{
+            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.04) 100%)',
+            border: '1px solid rgba(99, 102, 241, 0.25)',
+            borderRadius: 'var(--r-lg)',
+            padding: 'var(--sp-6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 'var(--sp-4)',
+          }}
+        >
+          <div>
+            <h4 style={{ margin: '0 0 var(--sp-1) 0', fontSize: '1rem', fontWeight: 600, color: 'var(--text-1)' }}>
+              Stream Directly From Your Device
+            </h4>
+            <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-2)' }}>
+              No upload waiting time. Pick any local MP4, MKV, WebM, or MOV file and watch together in real time.
+            </p>
           </div>
-
-          {loadingMovies ? (
-            <div style={{ padding: 'var(--sp-8)', display: 'flex', justifyContent: 'center', color: 'var(--text-3)' }}>
-              <Loader2 className="spinner" size={24} />
-            </div>
-          ) : error ? (
-            <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', borderColor: 'var(--error)' }}>
-              <AlertCircle color="var(--error)" size={20} />
-              <div style={{ flex: 1 }}>
-                <p style={{ color: 'var(--text-1)', fontSize: '0.875rem', fontWeight: 500 }}>Failed to load library</p>
-                <p style={{ color: 'var(--error)', fontSize: '0.8125rem' }}>{error}</p>
-              </div>
-              <button className="btn btn-secondary btn-sm" onClick={fetchMoviesList}>Retry</button>
-            </div>
-          ) : myMovies.length === 0 ? (
-            <div
-              className="card"
-              style={{
-                padding: 'var(--sp-8)',
-                textAlign: 'center',
-                color: 'var(--text-2)',
-                background: 'var(--bg-card)',
-              }}
-            >
-              <Film size={32} style={{ margin: '0 auto var(--sp-2)', opacity: 0.3 }} />
-              <p style={{ fontWeight: 500, color: 'var(--text-1)', marginBottom: 'var(--sp-1)' }}>
-                Your media library is empty
-              </p>
-              <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', marginBottom: 'var(--sp-4)' }}>
-                Only movies you select or upload are visible in your personal library.
-              </p>
-              <div style={{ display: 'flex', gap: 'var(--sp-3)', justifyContent: 'center' }}>
-                {movies.length > 0 && (
-                  <button className="btn btn-secondary btn-sm" onClick={() => setIsAddModalOpen(true)}>
-                    <Plus size={14} /> Add from Available Movies
-                  </button>
-                )}
-                <button className="btn btn-primary btn-sm" onClick={() => handleOpenCreateModal()}>
-                  <Plus size={14} /> Create Room
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="movie-grid">
-              {myMovies.map((movie) => (
-                <MovieCard
-                  key={movie.id}
-                  movie={movie}
-                  onSelectForRoom={handleOpenCreateModal}
-                  onRemove={(m) => removeMovieFromUserLibrary(m.filename, movies)}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* Section 3: Upload Media */}
-        <section>
-          <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 'var(--sp-4)' }}>
-            Upload Media
-          </h3>
-          <UploadZone onUploaded={setMovies} />
+          <button className="btn btn-primary btn-sm" onClick={() => handleOpenCreateModal()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Zap size={14} /> Start P2P Broadcast
+          </button>
         </section>
       </div>
 
@@ -505,25 +433,14 @@ export default function Home() {
       <CreateRoomModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        movies={movies}
-        preselectedMovie={preselectedMovie}
-        onMovieUploaded={setMovies}
-      />
-
-      {/* Add Movie Modal */}
-      <AddMovieModal
-        isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        movies={movies}
-        onMovieUploaded={fetchMoviesList}
       />
 
       {/* Auth Modal */}
       <AuthModal
         isOpen={authModalOpen}
-        initialMode={authModalMode}
         onClose={() => setAuthModalOpen(false)}
-        onSuccess={handleAuthSuccess}
+        initialMode={authModalMode}
+        onAuthSuccess={handleAuthSuccess}
       />
     </div>
   );

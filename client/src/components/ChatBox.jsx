@@ -42,7 +42,7 @@ export default function ChatBox({
       <div className="chat-messages">
         {messages.length === 0 ? (
           <div className="chat-empty">
-            <MessageSquare size={28} style={{ opacity: 0.4 }} />
+            <MessageSquare size={22} style={{ opacity: 0.35 }} />
             <p style={{ fontWeight: 500, color: 'var(--text-2)' }}>No messages yet</p>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-3)' }}>
               Say hello or chat during the movie!
@@ -97,12 +97,12 @@ export default function ChatBox({
         />
         <button
           type="submit"
-          className="btn btn-primary btn-sm"
+          className="btn btn-primary btn-sm chat-send-btn"
           disabled={!text.trim()}
           title="Send message (Enter)"
-          style={{ padding: '0 var(--sp-3)' }}
+          
         >
-          <Send size={15} />
+          <Send size={13} />
         </button>
       </form>
     </div>
