@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { PORT, HLS_DIR } from './config.js';
+import { PORT, HOST, HLS_DIR } from './config.js';
 import moviesRouter from './routes/movies.js';
 import roomsRouter from './routes/rooms.js';
 import authRouter from './routes/auth.js';
@@ -83,7 +83,7 @@ function getGlobalIPv6Addresses() {
 }
 
 // Bind to '::' (dual-stack: all IPv6 and IPv4 interfaces)
-server.listen(PORT, '::', () => {
+server.listen(PORT, HOST, () => {
   const ipv6List = getGlobalIPv6Addresses();
   console.log(`\n🎬 Watch Together server running on PORT ${PORT}`);
   console.log(`   Local IPv4:  http://localhost:${PORT}`);

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { createRoom } from "../api/index.js";
 import { getSessionClientId } from "../hooks/useWebSocket.js";
-import { addMovieToUserLibrary } from "../utils/userLibrary.js";
+import { addMovieToUserLibrary } from "../utils/library.js";
 import UploadZone from "./UploadZone.jsx";
 import { X, Film, Check, Plus, Loader2, Zap, HardDrive, Upload } from "lucide-react";
 

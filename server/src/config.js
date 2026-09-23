@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const PORT = process.env.PORT || 3001;
+export const HOST = process.env.HOST || "0.0.0.0";
 export const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 export const MEDIA_DIR = path.resolve(__dirname, '..', 'media');
 export const HLS_DIR = path.resolve(__dirname, '..', 'hls');
