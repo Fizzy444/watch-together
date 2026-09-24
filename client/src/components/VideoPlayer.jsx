@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
 import Hls from 'hls.js';
 import {
   Play,
@@ -26,14 +26,13 @@ function formatTime(s) {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-export default function VideoPlayer({
+const VideoPlayer = forwardRef(function VideoPlayer({
   src,
   streamObject = null,
   isP2P = false,
   p2pStatus = null,
   onStreamReady = null,
   isHost,
-  wsMsg,
   initialTime = 0,
   initialPlaying = false,
   wasPlayingBeforeDisconnect = false,
@@ -41,7 +40,7 @@ export default function VideoPlayer({
   onPause,
   onSeek,
   onTimeUpdate,
-}) {
+}, ref) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const isHostRef = useRef(isHost);
@@ -315,12 +314,13 @@ export default function VideoPlayer({
     };
   }, [onTimeUpdate]);
 
-  // Buttery-smooth WebSocket sync dispatcher
-  useEffect(() => {
-    if (!wsMsg || !videoRef.current) return;
-    const video = videoRef.current;
+  // Expose imperative handle for sync message dispatch
+  useImperativeHandle(ref, () => ({
+    handleSyncMessage(wsMsg) {
+      if (!wsMsg || !videoRef.current) return;
+      const video = videoRef.current;
 
-    switch (wsMsg.type) {
+      switch (wsMsg.type) {
       case 'room_state': {
         const roomState = wsMsg.room;
         if (roomState && !hasInitializedTime.current) {
@@ -434,7 +434,8 @@ export default function VideoPlayer({
         break;
       }
     }
-  }, [wsMsg]);
+    }
+  }));
 
   // Play / Pause toggle
   const handlePlayPause = useCallback(() => {
@@ -915,4 +916,6 @@ export default function VideoPlayer({
       </div>
     </div>
   );
-}
+});
+
+export default VideoPlayer;

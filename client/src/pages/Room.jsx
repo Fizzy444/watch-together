@@ -75,6 +75,7 @@ export default function Room() {
   const { room, applyMessage } = useRoom(initialRoom);
 
   const handleWebRTCMessageRef = useRef(null);
+  const videoPlayerRef = useRef(null);
 
   const handleMessage = useCallback(
     (msg) => {
@@ -104,6 +105,10 @@ export default function Room() {
 
       if (msg.type.startsWith("webrtc_") || msg.type === "host_changed") {
         handleWebRTCMessageRef.current?.(msg);
+      }
+      // Route playback sync messages to VideoPlayer
+      if (['play', 'pause', 'seek', 'sync_tick', 'room_state'].includes(msg.type)) {
+        videoPlayerRef.current?.handleSyncMessage(msg);
       }
             applyMessage(msg);
     },
@@ -544,13 +549,13 @@ export default function Room() {
             )}
 
             <VideoPlayer
+              ref={videoPlayerRef}
               src={isP2P ? localBlobUrl : videoSrc}
               streamObject={isP2P && !isHost ? remoteStream : null}
               isP2P={isP2P}
               p2pStatus={{ connectionState, viewersCount: connectedViewersCount }}
               onStreamReady={isP2P && isHost ? setLocalStream : null}
               isHost={isHost}
-              wsMsg={lastWsMsg}
               initialTime={room?.currentTime || 0}
               initialPlaying={room?.playing || false}
               wasPlayingBeforeDisconnect={Boolean(room?.wasPlayingBeforeHostDisconnect || room?.hostDisconnected)}

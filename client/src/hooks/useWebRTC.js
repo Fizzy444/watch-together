@@ -4,15 +4,29 @@ export const ICE_SERVERS = [
   // Google STUN (Direct P2P NAT hole punching)
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
-  // OpenRelay TURN Fallback (Bridges restrictive cellular carriers & CGNAT)
+  { urls: "stun:stun2.l.google.com:19302" },
+  { urls: "stun:stun3.l.google.com:19302" },
+  { urls: "stun:stun4.l.google.com:19302" },
+  // Metered TURN Fallback (Free tier, more reliable than OpenRelay)
   {
-    urls: [
-      "turn:openrelay.metered.ca:80",
-      "turn:openrelay.metered.ca:443",
-      "turn:openrelay.metered.ca:443?transport=tcp"
-    ],
-    username: "openrelay",
-    credential: "openrelay"
+    urls: "turn:a.relay.metered.ca:80",
+    username: "e8dd65b92f3c9e4eb3b95313",
+    credential: "5VPVxLMWJJn3KUQQ"
+  },
+  {
+    urls: "turn:a.relay.metered.ca:80?transport=tcp",
+    username: "e8dd65b92f3c9e4eb3b95313",
+    credential: "5VPVxLMWJJn3KUQQ"
+  },
+  {
+    urls: "turn:a.relay.metered.ca:443",
+    username: "e8dd65b92f3c9e4eb3b95313",
+    credential: "5VPVxLMWJJn3KUQQ"
+  },
+  {
+    urls: "turns:a.relay.metered.ca:443?transport=tcp",
+    username: "e8dd65b92f3c9e4eb3b95313",
+    credential: "5VPVxLMWJJn3KUQQ"
   }
 ];
 
