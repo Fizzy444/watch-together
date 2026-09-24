@@ -237,7 +237,10 @@ export default function Room() {
   }
 
   async function copyRoomLink() {
-    const url = `${window.location.origin}/watch/${roomId}`;
+    const serverUrl = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "") : "";
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:";
+    const baseUrl = (isLocal && serverUrl) ? serverUrl : window.location.origin;
+    const url = `${baseUrl}/watch/${roomId}`;
     try {
       await navigator.clipboard.writeText(url);
     } catch {
