@@ -56,6 +56,17 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
   }
 
+  // Allow toggling DevTools with Ctrl+Shift+I or F12 for debugging
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (((input.control || input.meta) && input.shift && input.key.toLowerCase() === "i") || input.key === "F12") {
+      mainWindow.webContents.toggleDevTools();
+    }
+  });
+
+  mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription, validatedURL) => {
+    console.error(`[Electron] Failed to load ${validatedURL}: ${errorCode} - ${errorDescription}`);
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
     cleanupTorrent();
