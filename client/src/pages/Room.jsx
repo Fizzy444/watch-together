@@ -23,6 +23,7 @@ import {
   X,
   Power,
   Zap,
+  Globe,
   Upload,
   PanelRightClose,
   PanelRightOpen,
@@ -122,8 +123,9 @@ export default function Room() {
     handleMessage
   );
 
-  const isP2P = Boolean(room?.streamType === 'p2p' || room?.movie === 'p2p-stream');
-  const isTorrent = Boolean(room?.streamType === 'torrent');
+  const isTunnel = Boolean(room?.streamType === 'tunnel' || (room?.movie && (room.movie.startsWith('http://') || room.movie.startsWith('https://'))));
+  const isP2P = !isTunnel && Boolean(room?.streamType === 'p2p' || room?.movie === 'p2p-stream');
+  const isTorrent = !isTunnel && Boolean(room?.streamType === 'torrent');
 
   // Precise host detection (User is host ONLY if matching hostId, creatorId, or user.isHost)
   const isHost = Boolean(
@@ -164,12 +166,15 @@ export default function Room() {
       if (localBlobUrl) {
         URL.revokeObjectURL(localBlobUrl);
       }
+      if (isHost && isTunnel) {
+        window.electronAPI?.stopHostTunnel?.();
+      }
     };
-  }, [localBlobUrl]);
+  }, [localBlobUrl, isHost, isTunnel]);
 
   useEffect(() => {
     if (streamReady) return;
-    if (isP2P || isTorrent) {
+    if (isP2P || isTorrent || isTunnel) {
       setStreamReady(true);
       return;
     }
@@ -183,7 +188,7 @@ export default function Room() {
     check();
     pollRef.current = setInterval(check, 2000);
     return () => clearInterval(pollRef.current);
-  }, [roomId, streamReady, isP2P, isTorrent]);
+  }, [roomId, streamReady, isP2P, isTorrent, isTunnel]);
 
   function addToast(msg, type = 'info') {
     const id = Date.now() + Math.random();
@@ -203,6 +208,9 @@ export default function Room() {
   async function handleCloseRoom() {
     setClosing(true);
     try {
+      if (isTunnel) {
+        window.electronAPI?.stopHostTunnel?.();
+      }
       send('close_room', {});
       await closeRoom(roomId, myUserId).catch(() => {});
       addToast('Room closed');
@@ -353,7 +361,7 @@ export default function Room() {
   }
 
   // Direct progressive streaming endpoint
-  const videoSrc = streamReady ? `/api/rooms/${roomId}/video` : null;
+  const videoSrc = isTunnel ? room.movie : (streamReady ? `/api/rooms/${roomId}/video` : null);
 
   return (
     <div className="room-page-wrapper">
@@ -569,7 +577,7 @@ export default function Room() {
 
             <VideoPlayer
               ref={videoPlayerRef}
-              src={isP2P ? localBlobUrl : videoSrc}
+              src={isTunnel ? room.movie : (isP2P ? localBlobUrl : videoSrc)}
               streamObject={isP2P && !isHost ? remoteStream : null}
               isP2P={isP2P}
               isTorrent={isTorrent}

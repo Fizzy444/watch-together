@@ -1,5 +1,8 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const http = require('http');
+const { Tunnel } = require('cloudflared');
 
 let WebTorrent;
 async function getWebTorrent() {
@@ -55,6 +58,7 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
     cleanupTorrent();
+    cleanupHostTunnel();
   });
 }
 
@@ -285,5 +289,183 @@ ipcMain.handle('stop-torrent', () => {
     cleanupTorrent();
     stopGraceTimer = null;
   }, 2000);
+  return true;
+});
+
+
+// Host Local Streaming & Cloudflare Tunnel
+let hostVideoServer = null;
+let hostCloudflareTunnel = null;
+
+function cleanupHostTunnel() {
+  if (hostCloudflareTunnel) {
+    try {
+      console.log('[Host Tunnel] Stopping Cloudflare Tunnel...');
+      hostCloudflareTunnel.stop();
+    } catch (e) {
+      console.error('Error stopping cloudflare tunnel:', e);
+    }
+    hostCloudflareTunnel = null;
+  }
+  if (hostVideoServer) {
+    try {
+      console.log('[Host Server] Closing local video streaming server...');
+      hostVideoServer.close();
+    } catch (e) {
+      console.error('Error closing host video server:', e);
+    }
+    hostVideoServer = null;
+  }
+}
+
+ipcMain.handle('select-video-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select Video File to Stream',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Video Files', extensions: ['mp4', 'mkv', 'webm', 'mov', 'avi'] }
+    ]
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+
+  const filePath = result.filePaths[0];
+  const stat = fs.statSync(filePath);
+  return {
+    filePath,
+    fileName: path.basename(filePath),
+    fileSize: stat.size,
+  };
+});
+
+ipcMain.handle('start-host-tunnel', async (event, filePath) => {
+  cleanupHostTunnel();
+
+  if (!fs.existsSync(filePath)) {
+    throw new Error('Selected video file does not exist: ' + filePath);
+  }
+
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const fileName = path.basename(filePath);
+  const ext = path.extname(filePath).toLowerCase();
+
+  let contentType = 'video/mp4';
+  if (ext === '.webm') contentType = 'video/webm';
+  else if (ext === '.mkv') contentType = 'video/x-matroska';
+  else if (ext === '.mov') contentType = 'video/quicktime';
+  else if (ext === '.avi') contentType = 'video/x-msvideo';
+
+  return new Promise((resolve, reject) => {
+    event.sender.send('host-tunnel-status', { step: 'starting-server', message: 'Starting local video streaming server...' });
+
+    hostVideoServer = http.createServer((req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Headers', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(200);
+        return res.end();
+      }
+
+      if (req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ status: 'ok', file: fileName, size: fileSize }));
+      }
+
+      const range = req.headers.range;
+      const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB chunks optimal for Cloudflare Tunnel
+
+      if (range) {
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        let end = parts[1] ? parseInt(parts[1], 10) : start + CHUNK_SIZE - 1;
+        if (end - start + 1 > CHUNK_SIZE) end = start + CHUNK_SIZE - 1;
+        if (end >= fileSize) end = fileSize - 1;
+
+        if (start >= fileSize) {
+          res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+          return res.end();
+        }
+
+        const chunksize = end - start + 1;
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunksize,
+          'Content-Type': contentType,
+          'Cache-Control': 'public, max-age=3600',
+        });
+
+        const stream = fs.createReadStream(filePath, { start, end });
+        res.on('close', () => stream.destroy());
+        stream.pipe(res);
+      } else {
+        res.writeHead(200, {
+          'Content-Length': fileSize,
+          'Accept-Ranges': 'bytes',
+          'Content-Type': contentType,
+          'Cache-Control': 'public, max-age=3600',
+        });
+        const stream = fs.createReadStream(filePath);
+        res.on('close', () => stream.destroy());
+        stream.pipe(res);
+      }
+    });
+
+    hostVideoServer.listen(0, () => {
+      const port = hostVideoServer.address().port;
+      console.log(`[Host Server] Video stream ready on local port ${port}`);
+
+      event.sender.send('host-tunnel-status', { step: 'creating-tunnel', message: 'Creating secure Cloudflare tunnel...' });
+
+      try {
+        hostCloudflareTunnel = Tunnel.quick(`http://localhost:${port}`);
+
+        hostCloudflareTunnel.once('url', (tunnelUrl) => {
+          console.log(`[Host Tunnel] Cloudflare Tunnel established: ${tunnelUrl}`);
+          const streamUrl = `${tunnelUrl}/video`;
+
+          event.sender.send('host-tunnel-status', {
+            step: 'ready',
+            message: 'Tunnel connected! Ready to stream.',
+            streamUrl,
+          });
+
+          resolve({
+            streamUrl,
+            tunnelUrl,
+            fileName,
+            fileSize,
+          });
+        });
+
+        hostCloudflareTunnel.on('error', (err) => {
+          console.error('[Host Tunnel] Error:', err);
+          event.sender.send('host-tunnel-status', { step: 'error', message: err.message });
+        });
+
+        hostCloudflareTunnel.on('exit', (code) => {
+          console.log(`[Host Tunnel] Exited with code ${code}`);
+        });
+      } catch (err) {
+        cleanupHostTunnel();
+        reject(err);
+      }
+    });
+
+    hostVideoServer.on('error', (err) => {
+      console.error('[Host Server] Error:', err);
+      cleanupHostTunnel();
+      reject(err);
+    });
+  });
+});
+
+ipcMain.handle('stop-host-tunnel', () => {
+  cleanupHostTunnel();
   return true;
 });

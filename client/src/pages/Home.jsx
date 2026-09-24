@@ -17,6 +17,7 @@ import {
   ArrowRight,
   Info,
   Zap,
+  Globe,
 } from 'lucide-react';
 
 export default function Home() {
@@ -357,23 +358,61 @@ export default function Home() {
                       <span className="room-card-title" title={r.name}>
                         {r.name}
                       </span>
-                      <span
-                        className="badge"
-                        style={{
-                          background: 'rgba(234, 179, 8, 0.12)',
-                          color: '#eab308',
-                          border: '1px solid rgba(234, 179, 8, 0.3)',
-                          fontSize: '0.625rem',
-                          padding: '1px 5px',
-                          flexShrink: 0,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 3,
-                        }}
-                      >
-                        <Zap size={9} />
-                        P2P
-                      </span>
+                      {r.streamType === 'tunnel' ? (
+                        <span
+                          className="badge"
+                          style={{
+                            background: 'rgba(59, 130, 246, 0.12)',
+                            color: '#60a5fa',
+                            border: '1px solid rgba(59, 130, 246, 0.3)',
+                            fontSize: '0.625rem',
+                            padding: '1px 5px',
+                            flexShrink: 0,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 3,
+                          }}
+                        >
+                          <Globe size={9} />
+                          Tunnel
+                        </span>
+                      ) : r.streamType === 'torrent' ? (
+                        <span
+                          className="badge"
+                          style={{
+                            background: 'rgba(168, 85, 247, 0.12)',
+                            color: '#c084fc',
+                            border: '1px solid rgba(168, 85, 247, 0.3)',
+                            fontSize: '0.625rem',
+                            padding: '1px 5px',
+                            flexShrink: 0,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 3,
+                          }}
+                        >
+                          <Radio size={9} />
+                          Torrent
+                        </span>
+                      ) : (
+                        <span
+                          className="badge"
+                          style={{
+                            background: 'rgba(234, 179, 8, 0.12)',
+                            color: '#eab308',
+                            border: '1px solid rgba(234, 179, 8, 0.3)',
+                            fontSize: '0.625rem',
+                            padding: '1px 5px',
+                            flexShrink: 0,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 3,
+                          }}
+                        >
+                          <Zap size={9} />
+                          P2P
+                        </span>
+                      )}
                     </div>
                     <span
                       className="status-indicator"

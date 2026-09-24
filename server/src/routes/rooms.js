@@ -42,6 +42,16 @@ router.post('/', async (req, res) => {
     });
   }
 
+  if (streamType === 'tunnel' || (movie && (movie.startsWith('http://') || movie.startsWith('https://')))) {
+    const movieTitle = name || 'Host Cloudflare Stream';
+    const room = createRoom(movie, movieTitle, name, clientId, 'tunnel');
+    return res.json({
+      roomId: room.id,
+      url: `/watch/${room.id}`,
+      ...roomPublicView(room),
+    });
+  }
+
   if (!movie) {
     return res.status(400).json({ error: 'movie filename is required' });
   }
@@ -107,6 +117,16 @@ router.get('/:id/stream/status', (req, res) => {
       directPlay: true,
       isP2P: true,
       streamType: 'p2p',
+      movie: room.movie,
+    });
+  }
+
+  if (room.streamType === 'tunnel' || (room.movie && (room.movie.startsWith('http://') || room.movie.startsWith('https://')))) {
+    return res.json({
+      ready: true,
+      directPlay: true,
+      isTunnel: true,
+      streamType: 'tunnel',
       movie: room.movie,
     });
   }

@@ -12,6 +12,7 @@
     "electron:build": "vite build && electron-builder"
   },
   "dependencies": {
+    "cloudflared": "^0.7.3",
     "hls.js": "^1.7.3",
     "lucide-react": "^1.47.0",
     "react": "^19.2.8",
