@@ -127,6 +127,9 @@ export default function CreateRoomModal({ isOpen, onClose }) {
           try {
             const tunnelRes = await window.electronAPI.startHostTunnel(selectedFile.filePath);
             streamUrl = tunnelRes.streamUrl;
+            if (tunnelRes.localStreamUrl) {
+              window.__hostLocalStreamUrl = tunnelRes.localStreamUrl;
+            }
             finalMovieName = (selectedFile?.name || selectedFile?.fileName || "").replace(/\.[^/.]+$/, "");
           } finally {
             unsubscribe?.();

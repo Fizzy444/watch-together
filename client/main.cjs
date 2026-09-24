@@ -441,6 +441,7 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
 
           resolve({
             streamUrl,
+            localStreamUrl: `http://localhost:${port}/video`,
             tunnelUrl,
             fileName,
             fileSize,
