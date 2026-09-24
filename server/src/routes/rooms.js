@@ -22,8 +22,18 @@ router.get('/', (_req, res) => {
 router.post('/', async (req, res) => {
   const { movie, name, clientId, isP2P, streamType } = req.body;
 
+  if (streamType === 'torrent') {
+    const movieTitle = name || 'Torrent Stream';
+    const room = createRoom(movie, movieTitle, name, clientId, 'torrent');
+    return res.json({
+      roomId: room.id,
+      url: `/watch/${room.id}`,
+      ...roomPublicView(room),
+    });
+  }
+
   if (isP2P || streamType === 'p2p') {
-    const movieTitle = (movie && movie.trim()) || name || 'Live P2P Broadcast';
+    const movieTitle = (movie && movie.trim() && movie !== 'p2p-stream') ? movie.trim() : name || 'Live P2P Broadcast';
     const room = createRoom('p2p-stream', movieTitle, name, clientId, 'p2p');
     return res.json({
       roomId: room.id,

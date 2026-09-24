@@ -123,6 +123,7 @@ export default function Room() {
   );
 
   const isP2P = Boolean(room?.streamType === 'p2p' || room?.movie === 'p2p-stream');
+  const isTorrent = Boolean(room?.streamType === 'torrent');
 
   // Precise host detection (User is host ONLY if matching hostId, creatorId, or user.isHost)
   const isHost = Boolean(
@@ -168,7 +169,7 @@ export default function Room() {
 
   useEffect(() => {
     if (streamReady) return;
-    if (isP2P) {
+    if (isP2P || isTorrent) {
       setStreamReady(true);
       return;
     }
@@ -182,7 +183,7 @@ export default function Room() {
     check();
     pollRef.current = setInterval(check, 2000);
     return () => clearInterval(pollRef.current);
-  }, [roomId, streamReady, isP2P]);
+  }, [roomId, streamReady, isP2P, isTorrent]);
 
   function addToast(msg, type = 'info') {
     const id = Date.now() + Math.random();
@@ -420,6 +421,24 @@ export default function Room() {
               P2P WebRTC
             </span>
           )}
+          {isTorrent && (
+            <span
+              className="badge"
+              style={{
+                background: "rgba(59, 130, 246, 0.12)",
+                color: "#3b82f6",
+                border: "1px solid rgba(59, 130, 246, 0.3)",
+                padding: "2px 7px",
+                fontSize: "0.6875rem",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <Zap size={11} />
+              WebTorrent
+            </span>
+          )}
         </div>
 
         <div className="room-topbar-right">
@@ -553,6 +572,8 @@ export default function Room() {
               src={isP2P ? localBlobUrl : videoSrc}
               streamObject={isP2P && !isHost ? remoteStream : null}
               isP2P={isP2P}
+              isTorrent={isTorrent}
+              torrentMagnet={isTorrent ? room.movie : null}
               p2pStatus={{ connectionState, viewersCount: connectedViewersCount }}
               onStreamReady={isP2P && isHost ? setLocalStream : null}
               isHost={isHost}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
 import Hls from 'hls.js';
+import WebTorrent from 'webtorrent/dist/webtorrent.min.js';
 import {
   Play,
   Pause,
@@ -31,6 +32,8 @@ const VideoPlayer = forwardRef(function VideoPlayer({
   streamObject = null,
   isP2P = false,
   p2pStatus = null,
+  isTorrent = false,
+  torrentMagnet = null,
   onStreamReady = null,
   isHost,
   initialTime = 0,
@@ -104,6 +107,47 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       };
     }
   }, [streamObject]);
+
+  // WebTorrent Client initialization
+  useEffect(() => {
+    if (!isTorrent || !torrentMagnet || !videoRef.current) return;
+    
+    console.log("[VideoPlayer] Initializing WebTorrent client for magnet:", torrentMagnet);
+    const client = new WebTorrent();
+    
+    client.on('error', (err) => {
+      console.error('[WebTorrent] Error:', err);
+    });
+
+    client.add(torrentMagnet, (torrent) => {
+      console.log("[WebTorrent] Torrent added, metadata ready. Files:", torrent.files.length);
+      
+      // Find the largest file (likely the video)
+      let largestFile = torrent.files[0];
+      for (const file of torrent.files) {
+        if (file.length > largestFile.length) {
+          largestFile = file;
+        }
+      }
+      
+      console.log("[WebTorrent] Selected file:", largestFile.name);
+      
+      // Webtorrent replaces the video src, wait for metadata
+      largestFile.renderTo(videoRef.current, { autoplay: false }, (err, elem) => {
+        if (err) console.error('[WebTorrent] renderTo error:', err);
+        else console.log('[WebTorrent] Video rendering ready');
+      });
+      
+      torrent.on('download', (bytes) => {
+        // We could track download speed here if we wanted
+      });
+    });
+
+    return () => {
+      console.log("[VideoPlayer] Destroying WebTorrent client");
+      client.destroy();
+    };
+  }, [isTorrent, torrentMagnet]);
 
   // Host stream capture listener (triggers as soon as metadata/canplay/play is ready)
   useEffect(() => {
@@ -684,7 +728,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         </div>
       )}
 
-      {isP2P && !isHost && !streamObject && (
+            {(isP2P && !isHost && !streamObject) || (isTorrent && !duration) ? (
         <div
           style={{
             position: "absolute",
@@ -703,15 +747,17 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         >
           <Loader2 className="spinner" size={36} color="var(--primary)" />
           <div style={{ fontSize: "0.9375rem", fontWeight: 600, color: "var(--text-1)" }}>
-            {p2pStatus?.connectionState === "connecting"
-              ? "Connecting to Host P2P Stream..."
-              : "Waiting for Host to begin broadcast..."}
+            {isTorrent 
+              ? "Connecting to Torrent Swarm (finding seeders)..." 
+              : p2pStatus?.connectionState === "connecting"
+                ? "Connecting to Host P2P Stream..."
+                : "Waiting for Host to begin broadcast..."}
           </div>
           <div style={{ fontSize: "0.8125rem", color: "var(--text-3)" }}>
-            Encrypted direct device-to-device WebRTC
+            {isTorrent ? "Decentralized WebTorrent Streaming" : "Encrypted direct device-to-device WebRTC"}
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* Host Reconnecting Banner (guests only) */}
       {hostReconnecting && !isHost && (

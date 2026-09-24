@@ -16,6 +16,8 @@ function formatBytes(bytes, decimals = 1) {
 export default function CreateRoomModal({ isOpen, onClose }) {
   const navigate = useNavigate();
   const [roomName, setRoomName] = useState("");
+  const [inputType, setInputType] = useState("local"); // "local" | "torrent"
+  const [magnetLink, setMagnetLink] = useState("");
   const [localFile, setLocalFile] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -139,7 +141,27 @@ export default function CreateRoomModal({ isOpen, onClose }) {
               </span>
             </div>
 
-            {/* Choose Video File from Device */}
+            {/* Type Selector */}
+            <div style={{ display: "flex", gap: "10px", marginBottom: "var(--sp-2)" }}>
+              <button
+                type="button"
+                className={`btn ${inputType === 'local' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ flex: 1 }}
+                onClick={() => setInputType('local')}
+              >
+                Local File (P2P)
+              </button>
+              <button
+                type="button"
+                className={`btn ${inputType === 'torrent' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ flex: 1 }}
+                onClick={() => setInputType('torrent')}
+              >
+                Torrent (Magnet Link)
+              </button>
+            </div>
+
+            {inputType === 'local' ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
               <label style={{ fontSize: "0.8125rem", fontWeight: 500, color: "var(--text-1)" }}>
                 Choose Video from Device
@@ -244,6 +266,38 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                 </span>
               </div>
             </div>
+            ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+              <label style={{ fontSize: "0.8125rem", fontWeight: 500, color: "var(--text-1)" }}>
+                Torrent Magnet Link
+              </label>
+              <input
+                type="text"
+                className="input"
+                placeholder="magnet:?xt=urn:btih:..."
+                value={magnetLink}
+                onChange={(e) => setMagnetLink(e.target.value)}
+              />
+              <div
+                style={{
+                  padding: "8px 12px",
+                  background: "rgba(59, 130, 246, 0.08)",
+                  border: "1px solid rgba(59, 130, 246, 0.2)",
+                  borderRadius: "var(--r-sm)",
+                  fontSize: "0.75rem",
+                  color: "#3b82f6",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
+              >
+                <Zap size={14} style={{ flexShrink: 0 }} />
+                <span>
+                  Streams directly from WebTorrent peers. Viewers will also join the torrent swarm automatically!
+                </span>
+              </div>
+            </div>
+            )}
           </div>
 
           <div className="modal-footer">
@@ -253,7 +307,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={loading || !localFile}
+              disabled={loading || (inputType === "local" ? !localFile : !magnetLink.trim())}
               style={{ display: "flex", alignItems: "center", gap: 6 }}
             >
               {loading ? (
