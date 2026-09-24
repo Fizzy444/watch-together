@@ -69,7 +69,10 @@
       "owner": "Fizzy444",
       "repo": "watch-together"
     },
-    "artifactName": "Watch-Together-${version}-${os}.${ext}"
+    "artifactName": "Watch-Together-${version}-${os}.${ext}",
+    "asarUnpack": [
+      "**/node_modules/cloudflared/**"
+    ]
   },
   "allowScripts": {
     "bufferutil@4.1.0": true,

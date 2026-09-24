@@ -3,7 +3,42 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { Tunnel } = require('cloudflared');
+const cloudflared = require('cloudflared');
+const { Tunnel } = cloudflared;
+
+// Resolve cloudflared binary outside of app.asar to prevent "spawn ENOTDIR"
+function resolveCloudflaredBinary() {
+  let binPath = cloudflared.bin;
+  if (binPath && binPath.includes("app.asar")) {
+    const unpacked = binPath.replace("app.asar", "app.asar.unpacked");
+    if (fs.existsSync(unpacked)) {
+      return unpacked;
+    }
+    const binName = process.platform === "win32" ? "cloudflared.exe" : "cloudflared";
+    const altPath = path.join(app.getAppPath(), "..", "app.asar.unpacked", "node_modules", "cloudflared", "bin", binName);
+    if (fs.existsSync(altPath)) {
+      return altPath;
+    }
+  }
+  if (process.platform !== "win32") {
+    if (fs.existsSync("/usr/bin/cloudflared")) return "/usr/bin/cloudflared";
+    if (fs.existsSync("/usr/local/bin/cloudflared")) return "/usr/local/bin/cloudflared";
+  }
+  return binPath;
+}
+
+try {
+  const resolvedBin = resolveCloudflaredBinary();
+  if (resolvedBin) {
+    if (process.platform !== "win32" && fs.existsSync(resolvedBin)) {
+      try { fs.chmodSync(resolvedBin, 0o755); } catch {}
+    }
+    console.log("[Host Tunnel] Configured cloudflared binary:", resolvedBin);
+    cloudflared.use(resolvedBin);
+  }
+} catch (e) {
+  console.warn("[Host Tunnel] Failed to resolve unpacked cloudflared binary:", e);
+}
 
 let WebTorrent;
 async function getWebTorrent() {
