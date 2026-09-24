@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { ROOM_EXPIRY_MS } from '../config.js';
+import { ROOM_EXPIRY_MS, EMPTY_ROOM_EXPIRY_MS } from '../config.js';
 import { cleanupHLS } from './ffmpeg.js';
 
 /** @type {Map<string, Room>} */
@@ -48,9 +48,47 @@ function generateRoomId() {
 function resetExpiry(room) {
   clearTimeout(room.expiryTimer);
   room.expiryTimer = setTimeout(() => {
-    console.log(`[Room] Expiring room ${room.id}`);
+    console.log(`[Room] Expiring room ${room.id} after max session duration`);
     deleteRoom(room.id);
   }, ROOM_EXPIRY_MS);
+}
+
+/**
+ * Schedule auto turn-off countdown for a room with no active members (2-5 min, default 3 min).
+ * If no members rejoin before timer expires, the room is deleted.
+ */
+function scheduleEmptyTimer(room) {
+  if (!room) return;
+  if (room.emptyTimer) return; // Already scheduled
+
+  const durationMin = (EMPTY_ROOM_EXPIRY_MS / 60000).toFixed(1);
+  console.log(`[Room] Room ${room.id} ("${room.name}") has no members. Auto turn-off scheduled in ${durationMin} min.`);
+
+  room.emptyTimer = setTimeout(() => {
+    const currentRoom = getRoom(room.id);
+    if (!currentRoom) return;
+
+    if (currentRoom.users.length === 0) {
+      console.log(`[Room] Auto-turning off room ${room.id} ("${room.name}") after being empty for ${durationMin} min.`);
+      broadcast(room.id, {
+        type: 'room_closed',
+        message: 'This room was automatically closed due to inactivity (no members).',
+      });
+      deleteRoom(room.id);
+    } else {
+      currentRoom.emptyTimer = null;
+    }
+  }, EMPTY_ROOM_EXPIRY_MS);
+}
+
+/**
+ * Cancel pending empty room auto turn-off timer when a member joins.
+ */
+function cancelEmptyTimer(room) {
+  if (!room || !room.emptyTimer) return;
+  clearTimeout(room.emptyTimer);
+  room.emptyTimer = null;
+  console.log(`[Room] Member joined room ${room.id}. Cancelled empty room auto turn-off timer.`);
 }
 
 /**
@@ -93,9 +131,11 @@ export function createRoom(movie, movieName, name = null, creatorId = null, stre
     messages: [],
     createdAt: Date.now(),
     expiryTimer: null,
+    emptyTimer: null,
   };
   rooms.set(id, room);
   resetExpiry(room);
+  scheduleEmptyTimer(room);
   console.log(`[Room] Created room ${id} ("${roomTitle}") for movie "${movieName}" (creatorId=${creatorId})`);
   return room;
 }
@@ -108,6 +148,7 @@ export function deleteRoom(id) {
   const room = rooms.get(id);
   if (room) {
     clearTimeout(room.expiryTimer);
+    clearTimeout(room.emptyTimer);
     clearTimeout(room.hostPromotionTimer);
     rooms.delete(id);
     cleanupHLS(id);
@@ -146,6 +187,7 @@ export function addUser(roomId, user) {
     if (user.isHost) {
       room.hostId = user.id;
     }
+    cancelEmptyTimer(room);
     resetExpiry(room);
     return { room, isReconnect: true };
   }
@@ -170,6 +212,7 @@ export function addUser(roomId, user) {
   }
 
   room.users.push(user);
+  cancelEmptyTimer(room);
   resetExpiry(room);
   return { room, isReconnect: false };
 }
@@ -214,8 +257,22 @@ export function removeUser(roomId, userId, ws = null) {
   }
 
   // NOTE: If room.users.length === 0, keep room.hostId intact so lone host can refresh smoothly!
+  if (room.users.length === 0) {
+    if (room.playing) {
+      room.currentTime = getCurrentRoomTime(room);
+      room.playing = false;
+      room.lastUpdated = Date.now();
+      console.log(`[Room] All members left room ${roomId}. Auto-paused playback.`);
+    }
+    if (room.hostPromotionTimer) {
+      clearTimeout(room.hostPromotionTimer);
+      room.hostPromotionTimer = null;
+    }
+    scheduleEmptyTimer(room);
+  } else {
+    resetExpiry(room);
+  }
 
-  resetExpiry(room);
   return room;
 }
 

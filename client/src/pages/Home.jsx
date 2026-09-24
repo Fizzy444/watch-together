@@ -375,8 +375,11 @@ export default function Home() {
                         P2P
                       </span>
                     </div>
-                    <span className="status-indicator">
-                      {r.usersCount} {r.usersCount === 1 ? 'member' : 'members'}
+                    <span
+                      className="status-indicator"
+                      style={r.usersCount === 0 ? { color: '#f59e0b', fontSize: '0.75rem' } : undefined}
+                    >
+                      {r.usersCount === 0 ? 'Empty (closing soon)' : `${r.usersCount} ${r.usersCount === 1 ? 'member' : 'members'}`}
                     </span>
                   </div>
 
