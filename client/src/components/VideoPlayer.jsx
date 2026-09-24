@@ -119,41 +119,37 @@ const VideoPlayer = forwardRef(function VideoPlayer({
 
     // Electron Desktop App Mode
     if (window.electronAPI) {
-      // Guard: don't double-start if already running (React StrictMode mounts effects twice in dev)
-      if (window.__electronTorrentActive) {
-        return () => {};
-      }
-      window.__electronTorrentActive = true;
-
       console.log("[VideoPlayer] Initializing Native WebTorrent via Electron...");
-      setTorrentStatusText("Connecting to Torrent Swarm (finding seeders)...");
+      setTorrentStatusText("Connecting to BitTorrent swarm (finding seeders)...");
       setTorrentError("");
 
-      if (window.electronAPI.onTorrentProgress) {
-        window.electronAPI.onTorrentProgress((data) => {
-          if (isCancelled) return;
+      const removeProgress = window.electronAPI.onTorrentProgress?.((data) => {
+        if (isCancelled) return;
+        if (!data.hasMetadata) {
           if (data.numPeers > 0) {
-            setTorrentStatusText(`Connected to ${data.numPeers} peer${data.numPeers === 1 ? '' : 's'} • Buffering video...`);
+            setTorrentStatusText(`Connected to ${data.numPeers} seeder${data.numPeers === 1 ? '' : 's'} • Finding video metadata...`);
+          } else {
+            setTorrentStatusText("Connecting to BitTorrent swarm (finding seeders)...");
           }
-        });
-      }
+        } else {
+          const speedKB = (data.downloadSpeed / 1024).toFixed(0);
+          setTorrentStatusText(`Buffering video from ${data.numPeers} seeder${data.numPeers === 1 ? '' : 's'} (${speedKB} KB/s)...`);
+        }
+      });
 
-      if (window.electronAPI.onTorrentError) {
-        window.electronAPI.onTorrentError((err) => {
-          if (isCancelled) return;
-          console.error("Electron Torrent Error:", err);
-          const msg = typeof err === 'string' ? err : err?.message || 'Torrent error occurred';
-          // Suppress "reply was never sent" — it's a StrictMode artifact, not a real error
-          if (!msg.includes('reply was never sent')) {
-            setTorrentError(msg);
-          }
-        });
-      }
+      const removeError = window.electronAPI.onTorrentError?.((err) => {
+        if (isCancelled) return;
+        console.error("Electron Torrent Error:", err);
+        const msg = typeof err === 'string' ? err : err?.message || 'Torrent error occurred';
+        if (!msg.includes('reply was never sent') && !msg.includes('Torrent cancelled')) {
+          setTorrentError(msg);
+        }
+      });
 
       window.electronAPI.startTorrent(torrentMagnet).then((data) => {
         if (isCancelled) return;
         console.log("[VideoPlayer] Native stream ready:", data.streamUrl);
-        setTorrentStatusText(`Streaming ${data.fileName}...`);
+        setTorrentStatusText(`Buffering ${data.fileName}...`);
         const video = videoRef.current;
         if (video) {
           torrentSrcSetRef.current = true;
@@ -162,8 +158,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       }).catch(err => {
         if (isCancelled) return;
         const msg = err?.message || 'Failed to start torrent stream';
-        // Suppress StrictMode noise
-        if (!msg.includes('reply was never sent')) {
+        if (!msg.includes('reply was never sent') && !msg.includes('Torrent cancelled')) {
           console.error("Electron Torrent Error:", err);
           setTorrentError(msg);
         }
@@ -172,7 +167,8 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       return () => {
         isCancelled = true;
         torrentSrcSetRef.current = false;
-        window.__electronTorrentActive = false;
+        removeProgress?.();
+        removeError?.();
         window.electronAPI.stopTorrent();
       };
     } 
