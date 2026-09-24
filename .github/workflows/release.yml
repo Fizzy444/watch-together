@@ -60,6 +60,15 @@ jobs:
         working-directory: client
         run: npm ci
 
+      - name: Sync Package Version with Git Tag
+        working-directory: client
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "Setting package.json version to $VERSION from tag $TAG"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
       - name: Build Vite Client
         working-directory: client
         run: npm run build

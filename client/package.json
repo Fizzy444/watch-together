@@ -48,10 +48,12 @@
       "target": [
         "dmg",
         "zip"
-      ]
+      ],
+      "artifactName": "Watch-Together-${version}-mac.${ext}"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "artifactName": "Watch-Together-Setup-${version}.${ext}"
     },
     "linux": {
       "target": [
@@ -59,13 +61,15 @@
         "deb"
       ],
       "category": "Video",
-      "maintainer": "Fizzy444 <mr.mithun2521@gmail.com>"
+      "maintainer": "Fizzy444 <mr.mithun2521@gmail.com>",
+      "artifactName": "Watch-Together-${version}-linux.${ext}"
     },
     "publish": {
       "provider": "github",
       "owner": "Fizzy444",
       "repo": "watch-together"
-    }
+    },
+    "artifactName": "Watch-Together-${version}-${os}.${ext}"
   },
   "allowScripts": {
     "bufferutil@4.1.0": true,
