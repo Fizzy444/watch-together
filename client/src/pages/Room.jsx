@@ -166,11 +166,15 @@ export default function Room() {
       if (localBlobUrl) {
         URL.revokeObjectURL(localBlobUrl);
       }
-      if (isHost && isTunnel) {
-        window.electronAPI?.stopHostTunnel?.();
-      }
     };
-  }, [localBlobUrl, isHost, isTunnel]);
+  }, [localBlobUrl]);
+
+  // Stop host tunnel ONLY when navigating away from the room page completely
+  useEffect(() => {
+    return () => {
+      window.electronAPI?.stopHostTunnel?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (streamReady) return;
@@ -577,7 +581,7 @@ export default function Room() {
 
             <VideoPlayer
               ref={videoPlayerRef}
-              src={isTunnel ? room.movie : (isP2P ? localBlobUrl : videoSrc)}
+              src={videoSrc}
               streamObject={isP2P && !isHost ? remoteStream : null}
               isP2P={isP2P}
               isTorrent={isTorrent}

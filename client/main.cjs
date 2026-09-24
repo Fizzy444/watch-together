@@ -345,6 +345,10 @@ ipcMain.handle('select-video-file', async () => {
 });
 
 ipcMain.handle('start-host-tunnel', async (event, filePath) => {
+  if (hostStopGraceTimer) {
+    clearTimeout(hostStopGraceTimer);
+    hostStopGraceTimer = null;
+  }
   cleanupHostTunnel();
 
   if (!fs.existsSync(filePath)) {
@@ -382,6 +386,32 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
 
       const range = req.headers.range;
       const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB chunks optimal for Cloudflare Tunnel
+
+      // Handle HEAD requests without writing a body (required by HTTP specs & HTML5 players)
+      if (req.method === 'HEAD') {
+        if (range) {
+          const parts = range.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10);
+          let end = parts[1] ? parseInt(parts[1], 10) : start + CHUNK_SIZE - 1;
+          if (end >= fileSize) end = fileSize - 1;
+          const chunksize = end - start + 1;
+          res.writeHead(206, {
+            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': chunksize,
+            'Content-Type': contentType,
+            'Cache-Control': 'public, max-age=3600',
+          });
+        } else {
+          res.writeHead(200, {
+            'Content-Length': fileSize,
+            'Accept-Ranges': 'bytes',
+            'Content-Type': contentType,
+            'Cache-Control': 'public, max-age=3600',
+          });
+        }
+        return res.end();
+      }
 
       if (range) {
         const parts = range.replace(/bytes=/, '').split('-');
@@ -470,7 +500,14 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
   });
 });
 
+let hostStopGraceTimer = null;
+
 ipcMain.handle('stop-host-tunnel', () => {
-  cleanupHostTunnel();
+  if (hostStopGraceTimer) clearTimeout(hostStopGraceTimer);
+  hostStopGraceTimer = setTimeout(() => {
+    console.log('[Host Tunnel] Grace period expired. Stopping host stream.');
+    cleanupHostTunnel();
+    hostStopGraceTimer = null;
+  }, 2500);
   return true;
 });

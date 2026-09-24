@@ -723,6 +723,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         preload="metadata"
         onClick={handlePlayPause}
         onError={(e) => {
+          console.warn("[VideoPlayer] Video element error event:", e.target?.error?.code, e.target?.error?.message);
           // Only show a decode error if we actually set a real stream URL.
           // The video element fires an error naturally when it has no src (empty src = MEDIA_ERR_SRC_NOT_SUPPORTED).
           if (isTorrent && torrentSrcSetRef.current) {
