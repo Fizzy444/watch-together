@@ -108,11 +108,32 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     }
   }, [streamObject]);
 
-  // WebTorrent Client initialization
+  // WebTorrent / Electron Initialization
   useEffect(() => {
     if (!isTorrent || !torrentMagnet || !videoRef.current) return;
     
-    console.log("[VideoPlayer] Initializing WebTorrent client for magnet:", torrentMagnet);
+    let isCancelled = false;
+
+    // Electron Desktop App Mode
+    if (window.electronAPI) {
+      console.log("[VideoPlayer] Initializing Native WebTorrent via Electron...");
+      window.electronAPI.startTorrent(torrentMagnet).then((data) => {
+        if (isCancelled) return;
+        console.log("[VideoPlayer] Native stream ready:", data.streamUrl);
+        const video = videoRef.current;
+        if (video) {
+          video.src = data.streamUrl;
+        }
+      }).catch(err => console.error("Electron Torrent Error:", err));
+
+      return () => {
+        isCancelled = true;
+        window.electronAPI.stopTorrent();
+      };
+    } 
+    
+    // Web Browser Fallback Mode (WebRTC)
+    console.log("[VideoPlayer] Initializing Browser WebTorrent for magnet:", torrentMagnet);
     const client = new WebTorrent();
     
     client.on('error', (err) => {
@@ -120,9 +141,9 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     });
 
     client.add(torrentMagnet, (torrent) => {
-      console.log("[WebTorrent] Torrent added, metadata ready. Files:", torrent.files.length);
+      if (isCancelled) return;
+      console.log("[WebTorrent] Torrent added, metadata ready.");
       
-      // Find the largest file (likely the video)
       let largestFile = torrent.files[0];
       for (const file of torrent.files) {
         if (file.length > largestFile.length) {
@@ -130,20 +151,13 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         }
       }
       
-      console.log("[WebTorrent] Selected file:", largestFile.name);
-      
-      // Webtorrent replaces the video src, wait for metadata
-      largestFile.renderTo(videoRef.current, { autoplay: false }, (err, elem) => {
+      largestFile.renderTo(videoRef.current, { autoplay: false }, (err) => {
         if (err) console.error('[WebTorrent] renderTo error:', err);
-        else console.log('[WebTorrent] Video rendering ready');
-      });
-      
-      torrent.on('download', (bytes) => {
-        // We could track download speed here if we wanted
       });
     });
 
     return () => {
+      isCancelled = true;
       console.log("[VideoPlayer] Destroying WebTorrent client");
       client.destroy();
     };
