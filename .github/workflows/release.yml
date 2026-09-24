@@ -1,0 +1,90 @@
+name: Release Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-draft-release:
+    name: Create Draft Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Watch Together ${{ github.ref_name }}
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-upload:
+    name: Build (${{ matrix.platform }})
+    needs: create-draft-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            builder-args: --linux
+          - os: windows-latest
+            platform: windows
+            builder-args: --win
+          - os: macos-latest
+            platform: macos
+            builder-args: --mac
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install Client Dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Build Vite Client
+        working-directory: client
+        run: npm run build
+        env:
+          VITE_SERVER_URL: https://watch-together-hl8e.onrender.com
+
+      - name: Package with electron-builder
+        working-directory: client
+        run: npx electron-builder ${{ matrix.builder-args }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Prevent macOS build failures if no Apple Developer ID certificate is present
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload Artifacts to Draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            client/dist-electron/*.AppImage
+            client/dist-electron/*.deb
+            client/dist-electron/*.exe
+            client/dist-electron/*.dmg
+            client/dist-electron/*.zip
+            client/dist-electron/*.blockmap
+            client/dist-electron/latest*.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
