@@ -58,7 +58,8 @@
         "AppImage",
         "deb"
       ],
-      "category": "Video"
+      "category": "Video",
+      "maintainer": "Fizzy444 <mr.mithun2521@gmail.com>"
     },
     "publish": {
       "provider": "github",
@@ -75,7 +76,7 @@
     "utp-native@2.5.3": true
   },
   "description": "Watch Together Desktop App - Watch movies together in sync with automated Cloudflare tunnels",
-  "author": "Fizzy444",
+  "author": "Fizzy444 <mr.mithun2521@gmail.com>",
   "repository": {
     "type": "git",
     "url": "https://github.com/Fizzy444/watch-together.git"
