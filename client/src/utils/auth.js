@@ -1,5 +1,7 @@
 import { saveProfileName } from "./profile.js";
 
+const SERVER_URL = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "") : "";
+
 const TOKEN_KEY = "wt_auth_token";
 const USER_KEY = "wt_auth_user";
 
@@ -40,7 +42,7 @@ export function clearStoredAuth() {
 }
 
 export async function signupApi(username, password) {
-  const res = await fetch("/api/auth/signup", {
+  const res = await fetch(`${SERVER_URL}/api/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
@@ -54,7 +56,7 @@ export async function signupApi(username, password) {
 }
 
 export async function loginApi(username, password) {
-  const res = await fetch("/api/auth/login", {
+  const res = await fetch(`${SERVER_URL}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
@@ -71,7 +73,7 @@ export async function fetchCurrentUserApi() {
   const token = getStoredToken();
   if (!token) return null;
   try {
-    const res = await fetch("/api/auth/me", {
+    const res = await fetch(`${SERVER_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
@@ -89,7 +91,7 @@ export async function fetchCurrentUserApi() {
 export async function logoutApi() {
   const token = getStoredToken();
   if (token) {
-    fetch("/api/auth/logout", {
+    fetch(`${SERVER_URL}/api/auth/logout`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     }).catch(() => {});

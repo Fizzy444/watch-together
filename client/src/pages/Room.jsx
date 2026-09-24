@@ -365,7 +365,8 @@ export default function Room() {
   }
 
   // Direct progressive streaming endpoint
-  const videoSrc = isTunnel ? ((isHost && window.__hostLocalStreamUrl) ? window.__hostLocalStreamUrl : room.movie) : (streamReady ? `/api/rooms/${roomId}/video` : null);
+  const serverUrl = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "") : "";
+  const videoSrc = isTunnel ? ((isHost && window.__hostLocalStreamUrl) ? window.__hostLocalStreamUrl : room.movie) : (streamReady ? `${serverUrl}/api/rooms/${roomId}/video` : null);
 
   return (
     <div className="room-page-wrapper">
