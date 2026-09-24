@@ -49,31 +49,52 @@ export default function CreateRoomModal({ isOpen, onClose }) {
     e.preventDefault();
     setError("");
 
-    if (!localFile) {
-      setError("Please choose a video file from your device to stream");
-      return;
+    if (inputType === "local") {
+      if (!localFile) {
+        setError("Please choose a video file from your device to stream");
+        return;
+      }
+    } else {
+      if (!magnetLink.trim()) {
+        setError("Please enter a valid torrent magnet link");
+        return;
+      }
+      if (!magnetLink.trim().startsWith("magnet:?")) {
+        setError("Torrent link must be a valid magnet link starting with 'magnet:?'");
+        return;
+      }
     }
 
     setLoading(true);
     try {
       const clientId = getSessionClientId();
-      const finalTitle = roomName.trim() || localFile.name.replace(/\.[^/.]+$/, "");
+
+      let parsedTitle = "";
+      if (inputType === "torrent") {
+        const dnMatch = magnetLink.match(/dn=([^&]+)/);
+        parsedTitle = dnMatch ? decodeURIComponent(dnMatch[1].replace(/\+/g, " ")) : "Torrent Stream";
+      } else {
+        parsedTitle = localFile.name.replace(/\.[^/.]+$/, "");
+      }
+      const finalTitle = roomName.trim() || parsedTitle;
 
       const room = await createRoom({
         isP2P: true,
-        streamType: "p2p",
-        movie: localFile.name,
+        streamType: inputType === "torrent" ? "torrent" : "p2p",
+        movie: inputType === "torrent" ? magnetLink.trim() : localFile.name,
         name: finalTitle,
         clientId,
       });
 
-      // Store file in window memory for instant pickup in Room page
-      window.__wt_p2p_file = localFile;
+      if (inputType === "local") {
+        // Store file in window memory for instant pickup in Room page
+        window.__wt_p2p_file = localFile;
+      }
 
       onClose();
       navigate(`/watch/${room.roomId}`);
     } catch (err) {
-      setError(err.message || "Failed to create P2P room");
+      setError(err.message || "Failed to create room");
     } finally {
       setLoading(false);
     }
@@ -316,7 +337,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                 </>
               ) : (
                 <>
-                  <Zap size={15} /> Create & Broadcast P2P
+                  <Zap size={15} /> {inputType === "torrent" ? "Create Torrent Room" : "Create & Broadcast P2P"}
                 </>
               )}
             </button>
