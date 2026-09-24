@@ -57,6 +57,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
   const [buffering, setBuffering] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(false);
   const hideControlsTimer = useRef(null);
+  const torrentSrcSetRef = useRef(false);
   const [torrentStatusText, setTorrentStatusText] = useState("");
   const [torrentError, setTorrentError] = useState("");
 
@@ -143,6 +144,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         setTorrentStatusText(`Streaming ${data.fileName}...`);
         const video = videoRef.current;
         if (video) {
+          torrentSrcSetRef.current = true;
           video.src = data.streamUrl;
         }
       }).catch(err => {
@@ -152,6 +154,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
 
       return () => {
         isCancelled = true;
+        torrentSrcSetRef.current = false;
         window.electronAPI.stopTorrent();
       };
     } 
@@ -705,9 +708,16 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         playsInline
         preload="metadata"
         onClick={handlePlayPause}
-        onError={() => {
-          if (isTorrent && !duration) {
-            setTorrentError("Video decoding error: The video format inside this torrent cannot be played by the HTML5 video engine.");
+        onError={(e) => {
+          // Only show a decode error if we actually set a real stream URL.
+          // The video element fires an error naturally when it has no src (empty src = MEDIA_ERR_SRC_NOT_SUPPORTED).
+          if (isTorrent && torrentSrcSetRef.current) {
+            const code = e.target?.error?.code;
+            // MEDIA_ERR_SRC_NOT_SUPPORTED = 4 (unplayable format)
+            // MEDIA_ERR_DECODE = 3
+            if (code === 4 || code === 3) {
+              setTorrentError("Video decoding error: The video format inside this torrent cannot be played by the HTML5 video engine.");
+            }
           }
         }}
         style={{
