@@ -1,3 +1,4 @@
+process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true';
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -333,9 +334,12 @@ ipcMain.handle('select-video-file', async () => {
 
   const filePath = result.filePaths[0];
   const stat = fs.statSync(filePath);
+  const bName = path.basename(filePath);
   return {
     filePath,
-    fileName: path.basename(filePath),
+    name: bName,
+    fileName: bName,
+    size: stat.size,
     fileSize: stat.size,
   };
 });

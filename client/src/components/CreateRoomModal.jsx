@@ -46,9 +46,17 @@ export default function CreateRoomModal({ isOpen, onClose }) {
       try {
         const res = await window.electronAPI.selectVideoFile();
         if (res) {
-          setSelectedFile(res);
+          const pickedName = res.fileName || res.name || "";
+          const fileObj = {
+            name: pickedName,
+            fileName: pickedName,
+            size: res.fileSize || res.size || 0,
+            fileSize: res.fileSize || res.size || 0,
+            filePath: res.filePath,
+          };
+          setSelectedFile(fileObj);
           if (!roomName.trim()) {
-            setRoomName(res.fileName.replace(/\.[^/.]+$/, ""));
+            setRoomName(pickedName.replace(/\.[^/.]+$/, ""));
           }
         }
       } catch (err) {
@@ -119,7 +127,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
           try {
             const tunnelRes = await window.electronAPI.startHostTunnel(selectedFile.filePath);
             streamUrl = tunnelRes.streamUrl;
-            finalMovieName = selectedFile.name.replace(/\.[^/.]+$/, "");
+            finalMovieName = (selectedFile?.name || selectedFile?.fileName || "").replace(/\.[^/.]+$/, "");
           } finally {
             unsubscribe?.();
           }
@@ -229,7 +237,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
               <input
                 type="text"
                 className="input"
-                placeholder={selectedFile ? selectedFile.name.replace(/\.[^/.]+$/, "") : "e.g. Movie Night with Friends"}
+                placeholder={(selectedFile?.name || selectedFile?.fileName) ? (selectedFile.name || selectedFile.fileName).replace(/\.[^/.]+$/, "") : "e.g. Movie Night with Friends"}
                 value={roomName}
                 onChange={(e) => setRoomName(e.target.value)}
                 autoFocus
@@ -311,10 +319,10 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                                 textOverflow: "ellipsis",
                               }}
                             >
-                              {selectedFile.name}
+                              {selectedFile?.name || selectedFile?.fileName}
                             </div>
                             <div style={{ fontSize: "0.75rem", color: "var(--text-3)" }}>
-                              {formatBytes(selectedFile.size)} • Automated Tunnel Ready
+                              {formatBytes(selectedFile?.size || selectedFile?.fileSize)} • Automated Tunnel Ready
                             </div>
                           </div>
                         </div>
