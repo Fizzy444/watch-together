@@ -9,6 +9,7 @@ import VideoPlayer from '../components/VideoPlayer.jsx';
 import UserList from '../components/UserList.jsx';
 import ChatBox from '../components/ChatBox.jsx';
 import ProfileModal from '../components/ProfileModal.jsx';
+import ProfileBadge from '../components/ProfileBadge.jsx';
 import {
   ArrowLeft,
   Loader2,
@@ -458,6 +459,16 @@ export default function Room() {
         </div>
 
         <div className="room-topbar-right">
+          {/* Profile Badge with dropdown & Sign Out */}
+          {userName && (
+            <ProfileBadge
+              name={userName}
+              onSignOut={() => {
+                navigate("/dashboard");
+              }}
+            />
+          )}
+
           {/* Invite Link Button */}
           <button
             className="btn btn-secondary btn-sm room-topbar-btn"

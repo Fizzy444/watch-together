@@ -66,6 +66,8 @@ export default function Home() {
       setCurrentUser(user);
       if (user) {
         setProfileName(user.username);
+      } else {
+        setProfileName(getProfileName() || "");
       }
     };
     window.addEventListener('wt-auth-changed', handleAuthChange);
