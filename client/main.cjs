@@ -97,9 +97,11 @@ ipcMain.handle('start-torrent', async (event, magnetLink) => {
 
     torrentServer = webtorrentClient.createServer();
 
-    torrentServer.on('error', (err) => {
-      console.error('Torrent server error:', err);
-    });
+    if (torrentServer && torrentServer.server) {
+      torrentServer.server.on('error', (err) => {
+        console.error('Torrent server error:', err);
+      });
+    }
 
     torrentServer.listen(0, () => {
       const port = torrentServer.address().port;
