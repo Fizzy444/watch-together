@@ -68,7 +68,7 @@ jobs:
 
       - name: Package with electron-builder
         working-directory: client
-        run: npx electron-builder ${{ matrix.builder-args }}
+        run: npx electron-builder ${{ matrix.builder-args }} --publish never
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Prevent macOS build failures if no Apple Developer ID certificate is present
