@@ -57,6 +57,8 @@ const VideoPlayer = forwardRef(function VideoPlayer({
   const [buffering, setBuffering] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(false);
   const hideControlsTimer = useRef(null);
+  const [torrentStatusText, setTorrentStatusText] = useState("");
+  const [torrentError, setTorrentError] = useState("");
 
   const bumpControls = useCallback(() => {
     setControlsVisible(true);
@@ -117,14 +119,36 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     // Electron Desktop App Mode
     if (window.electronAPI) {
       console.log("[VideoPlayer] Initializing Native WebTorrent via Electron...");
+      setTorrentStatusText("Connecting to Torrent Swarm (finding seeders)...");
+      setTorrentError("");
+
+      if (window.electronAPI.onTorrentProgress) {
+        window.electronAPI.onTorrentProgress((data) => {
+          if (data.numPeers > 0) {
+            setTorrentStatusText(`Connected to ${data.numPeers} peer${data.numPeers === 1 ? '' : 's'} • Buffering video...`);
+          }
+        });
+      }
+
+      if (window.electronAPI.onTorrentError) {
+        window.electronAPI.onTorrentError((err) => {
+          console.error("Electron Torrent Error:", err);
+          setTorrentError(typeof err === 'string' ? err : err?.message || 'Torrent error occurred');
+        });
+      }
+
       window.electronAPI.startTorrent(torrentMagnet).then((data) => {
         if (isCancelled) return;
         console.log("[VideoPlayer] Native stream ready:", data.streamUrl);
+        setTorrentStatusText(`Streaming ${data.fileName}...`);
         const video = videoRef.current;
         if (video) {
           video.src = data.streamUrl;
         }
-      }).catch(err => console.error("Electron Torrent Error:", err));
+      }).catch(err => {
+        console.error("Electron Torrent Error:", err);
+        setTorrentError(err.message || 'Failed to start torrent stream');
+      });
 
       return () => {
         isCancelled = true;
@@ -681,6 +705,11 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         playsInline
         preload="metadata"
         onClick={handlePlayPause}
+        onError={() => {
+          if (isTorrent && !duration) {
+            setTorrentError("Video decoding error: The video format inside this torrent cannot be played by the HTML5 video engine.");
+          }
+        }}
         style={{
           width: '100%',
           height: '100%',
@@ -751,25 +780,41 @@ const VideoPlayer = forwardRef(function VideoPlayer({
             right: 0,
             bottom: 0,
             zIndex: 12,
-            background: "rgba(10, 10, 10, 0.92)",
+            background: "rgba(10, 10, 10, 0.95)",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            gap: "12px",
+            gap: "14px",
+            padding: "32px",
+            textAlign: "center",
           }}
         >
-          <Loader2 className="spinner" size={36} color="var(--primary)" />
-          <div style={{ fontSize: "0.9375rem", fontWeight: 600, color: "var(--text-1)" }}>
-            {isTorrent 
-              ? "Connecting to Torrent Swarm (finding seeders)..." 
-              : p2pStatus?.connectionState === "connecting"
-                ? "Connecting to Host P2P Stream..."
-                : "Waiting for Host to begin broadcast..."}
-          </div>
-          <div style={{ fontSize: "0.8125rem", color: "var(--text-3)" }}>
-            {isTorrent ? "Decentralized WebTorrent Streaming" : "Encrypted direct device-to-device WebRTC"}
-          </div>
+          {torrentError ? (
+            <>
+              <ShieldAlert size={42} color="#ef4444" />
+              <div style={{ fontSize: "1rem", fontWeight: 600, color: "#f87171", maxWidth: 500, lineHeight: 1.5 }}>
+                {torrentError}
+              </div>
+              <div style={{ fontSize: "0.8125rem", color: "var(--text-3)", maxWidth: 460 }}>
+                Tip: Torrents must contain direct playable video files (.mp4, .mkv, .webm), not raw disk images (.iso) or compressed archives (.rar, .zip).
+              </div>
+            </>
+          ) : (
+            <>
+              <Loader2 className="spinner" size={36} color="var(--primary)" />
+              <div style={{ fontSize: "0.9375rem", fontWeight: 600, color: "var(--text-1)" }}>
+                {isTorrent 
+                  ? (torrentStatusText || "Connecting to Torrent Swarm (finding seeders)...") 
+                  : p2pStatus?.connectionState === "connecting"
+                    ? "Connecting to Host P2P Stream..."
+                    : "Waiting for Host to begin broadcast..."}
+              </div>
+              <div style={{ fontSize: "0.8125rem", color: "var(--text-3)" }}>
+                {isTorrent ? "Native High-Speed BitTorrent Streaming" : "Encrypted direct device-to-device WebRTC"}
+              </div>
+            </>
+          )}
         </div>
       ) : null}
 

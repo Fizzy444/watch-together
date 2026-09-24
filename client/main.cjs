@@ -115,22 +115,46 @@ ipcMain.handle('start-torrent', async (event, magnetLink) => {
         reject(err);
       });
 
+      torrent.on('wire', () => {
+        event.sender.send('torrent-progress', {
+          progress: torrent.progress,
+          downloadSpeed: torrent.downloadSpeed,
+          numPeers: torrent.numPeers,
+        });
+      });
+
       torrent.on('ready', () => {
         console.log('Torrent ready, files found:', torrent.files.length);
-        let largestFile = torrent.files[0];
-        for (let i = 1; i < torrent.files.length; i++) {
-          if (torrent.files[i].length > largestFile.length) {
-            largestFile = torrent.files[i];
+        
+        const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.m4v', '.ts', '.m2ts'];
+        const videoFiles = torrent.files.filter(f => {
+          const ext = path.extname(f.name).toLowerCase();
+          return VIDEO_EXTENSIONS.includes(ext);
+        });
+
+        let targetFile = null;
+        if (videoFiles.length > 0) {
+          targetFile = videoFiles.reduce((prev, curr) => curr.length > prev.length ? curr : prev);
+        } else {
+          const largest = torrent.files.reduce((prev, curr) => curr.length > prev.length ? curr : prev);
+          const ext = path.extname(largest.name).toLowerCase();
+          if (['.iso', '.rar', '.zip', '.bin', '.img', '.7z'].includes(ext)) {
+            const errorMsg = `This torrent contains an unsupported disk image or archive (${largest.name}). HTML5 video players cannot stream raw disk images (.iso). Please use a torrent containing a direct video file (.mp4, .mkv, .webm).`;
+            console.error(errorMsg);
+            event.sender.send('torrent-error', errorMsg);
+            reject(new Error(errorMsg));
+            return;
           }
+          targetFile = largest;
         }
 
-        const streamUrl = 'http://localhost:' + port + largestFile.streamURL;
-        console.log('Streaming', largestFile.name, 'at', streamUrl);
+        const streamUrl = 'http://localhost:' + port + targetFile.streamURL;
+        console.log('Streaming', targetFile.name, 'at', streamUrl);
 
         resolve({
           streamUrl,
-          fileName: largestFile.name,
-          length: largestFile.length,
+          fileName: targetFile.name,
+          length: targetFile.length,
         });
       });
 
