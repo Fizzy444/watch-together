@@ -1,4 +1,7 @@
-const BASE = '/api';
+const SERVER_URL = import.meta.env.VITE_SERVER_URL
+  ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "")
+  : "";
+const BASE = `${SERVER_URL}/api`;
 
 export async function getMovies() {
   const res = await fetch(`${BASE}/movies`);

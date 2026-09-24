@@ -450,14 +450,14 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
       }
     });
 
-    hostVideoServer.listen(0, () => {
+    hostVideoServer.listen(0, '127.0.0.1', () => {
       const port = hostVideoServer.address().port;
       console.log(`[Host Server] Video stream ready on local port ${port}`);
 
       event.sender.send('host-tunnel-status', { step: 'creating-tunnel', message: 'Creating secure Cloudflare tunnel...' });
 
       try {
-        hostCloudflareTunnel = Tunnel.quick(`http://localhost:${port}`);
+        hostCloudflareTunnel = Tunnel.quick(`http://127.0.0.1:${port}`);
 
         hostCloudflareTunnel.once('url', (tunnelUrl) => {
           console.log(`[Host Tunnel] Cloudflare Tunnel established: ${tunnelUrl}`);
@@ -471,7 +471,7 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
 
           resolve({
             streamUrl,
-            localStreamUrl: `http://localhost:${port}/video`,
+            localStreamUrl: `http://127.0.0.1:${port}/video`,
             tunnelUrl,
             fileName,
             fileSize,
