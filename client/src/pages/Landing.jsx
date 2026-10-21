@@ -82,11 +82,10 @@ export default function Landing() {
               width: 36,
               height: 36,
               borderRadius: 'var(--r-md)',
-              background: 'linear-gradient(135deg, var(--primary) 0%, #a855f7 100%)',
+              background: 'var(--primary)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: '0 0 16px rgba(99, 102, 241, 0.35)',
             }}
           >
             <PlaySquare size={20} color="#fff" />
@@ -101,7 +100,8 @@ export default function Landing() {
                   fontSize: '0.6875rem',
                   padding: '2px 6px',
                   borderRadius: 'var(--r-full)',
-                  background: 'rgba(99, 102, 241, 0.15)',
+                  background: 'var(--primary-subtle)',
+                  border: '1px solid var(--primary-border)',
                   color: 'var(--primary)',
                   fontWeight: 600,
                 }}
@@ -186,21 +186,6 @@ export default function Landing() {
           position: 'relative',
         }}
       >
-        {/* Glow backdrop */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 20,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: '600px',
-            height: '240px',
-            background: 'radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, rgba(168, 85, 247, 0.05) 50%, transparent 70%)',
-            pointerEvents: 'none',
-            zIndex: 0,
-          }}
-        />
-
         {/* Feature badge */}
         <div
           style={{
@@ -209,13 +194,12 @@ export default function Landing() {
             gap: 8,
             padding: '6px 14px',
             borderRadius: 'var(--r-full)',
-            background: 'rgba(99, 102, 241, 0.1)',
-            border: '1px solid rgba(99, 102, 241, 0.25)',
+            background: 'var(--primary-subtle)',
+            border: '1px solid var(--primary-border)',
             fontSize: '0.8125rem',
             color: 'var(--primary)',
             fontWeight: 500,
             marginBottom: 'var(--sp-4)',
-            zIndex: 1,
           }}
         >
           <Sparkles size={14} />
@@ -231,19 +215,9 @@ export default function Landing() {
             letterSpacing: '-0.03em',
             margin: '0 0 var(--sp-4) 0',
             maxWidth: 820,
-            zIndex: 1,
           }}
         >
-          Watch Movies Together,{' '}
-          <span
-            style={{
-              background: 'linear-gradient(135deg, #818cf8 0%, #c084fc 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-            }}
-          >
-            Synchronized to the Millisecond.
-          </span>
+          Watch Movies Together, Synchronized in Real-Time
         </h1>
 
         {/* Subtitle */}
@@ -281,7 +255,6 @@ export default function Landing() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                boxShadow: '0 4px 20px rgba(99, 102, 241, 0.4)',
               }}
               onClick={() => navigate('/dashboard')}
             >
@@ -299,7 +272,6 @@ export default function Landing() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,
-                  boxShadow: '0 4px 20px rgba(99, 102, 241, 0.4)',
                 }}
                 onClick={() => handleOpenAuth('signup')}
               >
@@ -339,7 +311,7 @@ export default function Landing() {
             maxWidth: 520,
             width: '100%',
             justifyContent: 'center',
-            boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
+            boxShadow: 'var(--shadow-sm)',
             zIndex: 1,
           }}
         >
@@ -380,7 +352,7 @@ export default function Landing() {
             border: '1px solid var(--border)',
             borderRadius: 'var(--r-xl)',
             overflow: 'hidden',
-            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.6), 0 0 40px rgba(99, 102, 241, 0.1)',
+            boxShadow: 'var(--shadow-lg)',
             zIndex: 1,
           }}
         >
@@ -413,12 +385,12 @@ export default function Landing() {
                   fontSize: '0.6875rem',
                   padding: '2px 8px',
                   borderRadius: 'var(--r-full)',
-                  background: 'rgba(34, 197, 94, 0.15)',
-                  color: '#4ade80',
+                  background: 'var(--success-subtle)',
+                  color: 'var(--success)',
                   fontWeight: 600,
                 }}
               >
-                <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ade80' }} />
+                <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)' }} />
                 Synchronized (0ms offset)
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', color: 'var(--text-2)' }}>
@@ -445,25 +417,24 @@ export default function Landing() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                background: 'linear-gradient(180deg, #12151e 0%, #0c0e14 100%)',
+                background: 'var(--bg)',
                 padding: 'var(--sp-8)',
               }}
             >
               <div
                 style={{
-                  width: 64,
-                  height: 64,
+                  width: 60,
+                  height: 60,
                   borderRadius: '50%',
-                  background: 'rgba(99, 102, 241, 0.25)',
-                  border: '1px solid rgba(99, 102, 241, 0.5)',
+                  background: 'var(--primary)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#fff',
-                  boxShadow: '0 0 24px rgba(99, 102, 241, 0.5)',
+                  boxShadow: 'var(--shadow-md)',
                 }}
               >
-                <Play size={28} style={{ marginLeft: 4 }} />
+                <Play size={26} style={{ marginLeft: 3 }} />
               </div>
 
               {/* Bottom Playback Bar Overlay */}
@@ -590,7 +561,7 @@ export default function Landing() {
                 width: 44,
                 height: 44,
                 borderRadius: 'var(--r-md)',
-                background: 'rgba(99, 102, 241, 0.15)',
+                background: 'var(--primary-subtle)',
                 color: 'var(--primary)',
                 display: 'flex',
                 alignItems: 'center',
@@ -820,8 +791,8 @@ export default function Landing() {
       >
         <div
           style={{
-            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.1) 100%)',
-            border: '1px solid rgba(99, 102, 241, 0.3)',
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border)',
             borderRadius: 'var(--r-xl)',
             padding: 'var(--sp-10) var(--sp-8)',
             textAlign: 'center',
@@ -829,6 +800,7 @@ export default function Landing() {
             flexDirection: 'column',
             alignItems: 'center',
             gap: 'var(--sp-4)',
+            boxShadow: 'var(--shadow-md)',
           }}
         >
           <h2 style={{ fontSize: '1.875rem', fontWeight: 700, margin: 0, letterSpacing: '-0.02em' }}>
