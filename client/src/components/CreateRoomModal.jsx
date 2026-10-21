@@ -130,6 +130,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
             if (tunnelRes.localStreamUrl) {
               window.__hostLocalStreamUrl = tunnelRes.localStreamUrl;
             }
+            window.__hostFilePath = selectedFile.filePath;
             finalMovieName = (selectedFile?.name || selectedFile?.fileName || "").replace(/\.[^/.]+$/, "");
           } finally {
             unsubscribe?.();

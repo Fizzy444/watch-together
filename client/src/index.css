@@ -739,6 +739,158 @@ p {
   font-family: inherit;
 }
 
+/* ── Video Subtitles & Audio Banners ──────────────────────── */
+.player-unmute-banner {
+  position: absolute;
+  top: var(--sp-4);
+  right: var(--sp-4);
+  z-index: 25;
+  background: var(--bg-card);
+  border: 1px solid var(--warning);
+  color: #fff;
+  border-radius: var(--r-full);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(12px);
+  animation: fadeIn 0.2s ease-out;
+  transition: transform var(--t-fast), background var(--t-fast);
+}
+.player-unmute-banner:hover {
+  background: var(--bg-elevated);
+  transform: translateY(-1px);
+}
+.player-unmute-banner svg {
+  color: var(--warning);
+}
+
+.player-captions-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.player-captions-menu {
+  position: absolute;
+  bottom: calc(100% + var(--sp-3));
+  right: 0;
+  width: 270px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: rgba(24, 27, 35, 0.96);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-2);
+  box-shadow: var(--shadow-lg), 0 8px 32px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(16px);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.player-captions-header {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--text-3);
+  padding: var(--sp-1) var(--sp-2) var(--sp-1);
+}
+
+.player-captions-subheader {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-3);
+  padding: var(--sp-1) var(--sp-2);
+}
+
+.player-captions-divider {
+  height: 1px;
+  background: var(--border);
+  margin: var(--sp-1) 0;
+}
+
+.player-captions-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px var(--sp-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--text-1);
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.player-captions-item:hover,
+.player-captions-item:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+.player-captions-item.active {
+  color: var(--primary);
+  font-weight: 600;
+}
+.player-captions-item.action {
+  color: var(--text-2);
+  font-size: 0.78125rem;
+}
+.player-captions-item.action:hover {
+  color: var(--text-1);
+  background: var(--bg-hover);
+}
+
+.player-captions-check {
+  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--primary);
+}
+
+.player-captions-text {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-captions-tag {
+  font-size: 0.6875rem;
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  background: var(--bg-accent);
+  color: var(--text-3);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Native HTML5 WebVTT Subtitle Cue Styling */
+::cue {
+  background-color: rgba(10, 10, 12, 0.88);
+  color: #ffffff;
+  font-family: var(--font-sans);
+  font-size: 1.15rem;
+  font-weight: 500;
+  line-height: 1.4;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
 /* ── Clean Sidebar & Tabs ─────────────────────────────────── */
 .clean-sidebar {
   display: flex;

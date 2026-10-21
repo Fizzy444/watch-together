@@ -320,7 +320,7 @@ export default function Room() {
   useEffect(() => {
     function onKeyDown(e) {
       if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName)) return;
-      if (e.key === 'c' || e.key === 'C') {
+      if ((e.key === 'c' || e.key === 'C') && e.shiftKey) {
         e.preventDefault();
         toggleSidebar();
       }
@@ -607,6 +607,7 @@ export default function Room() {
               initialTime={room?.currentTime || 0}
               initialPlaying={room?.playing || false}
               wasPlayingBeforeDisconnect={Boolean(room?.wasPlayingBeforeHostDisconnect || room?.hostDisconnected)}
+              videoPath={window.__hostFilePath || null}
               onPlay={handlePlay}
               onPause={handlePause}
               onSeek={handleSeek}

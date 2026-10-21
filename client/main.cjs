@@ -1,5 +1,9 @@
 process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true';
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+
+// Ensure Chromium allows unmuted audio autoplay without requiring initial user gestures
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -365,6 +369,8 @@ function cleanupHostTunnel() {
   }
 }
 
+let currentHostVideoPath = null;
+
 ipcMain.handle('select-video-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Select Video File to Stream',
@@ -379,6 +385,7 @@ ipcMain.handle('select-video-file', async () => {
   }
 
   const filePath = result.filePaths[0];
+  currentHostVideoPath = filePath;
   const stat = fs.statSync(filePath);
   const bName = path.basename(filePath);
   return {
@@ -391,6 +398,7 @@ ipcMain.handle('select-video-file', async () => {
 });
 
 ipcMain.handle('start-host-tunnel', async (event, filePath) => {
+  currentHostVideoPath = filePath;
   if (hostStopGraceTimer) {
     clearTimeout(hostStopGraceTimer);
     hostStopGraceTimer = null;
@@ -557,3 +565,68 @@ ipcMain.handle('stop-host-tunnel', () => {
   }, 2500);
   return true;
 });
+
+// Subtitles & Captions IPC Handlers
+ipcMain.handle('find-matching-subtitles', async (_event, videoPath) => {
+  const targetPath = videoPath || currentHostVideoPath;
+  if (!targetPath || !fs.existsSync(targetPath)) {
+    return [];
+  }
+  try {
+    const dir = path.dirname(targetPath);
+    const videoExt = path.extname(targetPath);
+    const videoBase = path.basename(targetPath, videoExt).toLowerCase();
+
+    const files = fs.readdirSync(dir);
+    const SUB_EXTS = ['.srt', '.vtt'];
+    const matching = [];
+
+    for (const f of files) {
+      const ext = path.extname(f).toLowerCase();
+      if (!SUB_EXTS.includes(ext)) continue;
+
+      const subBase = path.basename(f, ext).toLowerCase();
+      // Match exact basename or prefix match (e.g. Inception.srt, Inception.en.srt, Inception-eng.vtt)
+      if (subBase === videoBase || subBase.startsWith(videoBase)) {
+        const fullPath = path.join(dir, f);
+        const content = fs.readFileSync(fullPath, 'utf8');
+        matching.push({
+          fileName: f,
+          filePath: fullPath,
+          format: ext.replace('.', ''),
+          content,
+        });
+      }
+    }
+    return matching;
+  } catch (err) {
+    console.error('Error finding matching subtitles:', err);
+    return [];
+  }
+});
+
+ipcMain.handle('select-subtitle-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select Subtitle File (.srt, .vtt)',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Subtitle Files', extensions: ['srt', 'vtt'] }
+    ]
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+
+  const filePath = result.filePaths[0];
+  const fileName = path.basename(filePath);
+  const ext = path.extname(filePath).toLowerCase().replace('.', '');
+  const content = fs.readFileSync(filePath, 'utf8');
+  return {
+    filePath,
+    fileName,
+    format: ext,
+    content,
+  };
+});
+

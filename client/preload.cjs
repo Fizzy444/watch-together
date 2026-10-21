@@ -24,4 +24,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('host-tunnel-status', handler);
     return () => ipcRenderer.removeListener('host-tunnel-status', handler);
   },
+
+  // Subtitles & Captions APIs
+  findMatchingSubtitles: (videoPath) => ipcRenderer.invoke('find-matching-subtitles', videoPath),
+  selectSubtitleFile: () => ipcRenderer.invoke('select-subtitle-file'),
 });
+
