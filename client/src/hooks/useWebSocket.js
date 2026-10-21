@@ -39,9 +39,18 @@ export function useWebSocket(roomId, userName, onMessage) {
     }
     clearTimeout(reconnectTimer.current);
 
-    // Support both ws:// and secure wss:// (when accessed via HTTPS / Cloudflare Tunnel)
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${window.location.host}/ws?room=${encodeURIComponent(roomId)}&name=${encodeURIComponent(userName)}&clientId=${encodeURIComponent(clientId)}`;
+    // Support remote Koyeb / cloud server or local dev server
+    const serverUrl = import.meta.env.VITE_SERVER_URL;
+    let wsHost = window.location.host;
+    let protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+    if (serverUrl) {
+      const isSecure = serverUrl.startsWith('https:');
+      protocol = isSecure ? 'wss:' : 'ws:';
+      wsHost = serverUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    }
+
+    const url = `${protocol}//${wsHost}/ws?room=${encodeURIComponent(roomId)}&name=${encodeURIComponent(userName)}&clientId=${encodeURIComponent(clientId)}`;
     const ws = new WebSocket(url);
     ws._isClosedByClient = false;
     wsRef.current = ws;

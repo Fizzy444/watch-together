@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useWebRTC } from '../hooks/useWebRTC.js';
 import { getRoom, getStreamStatus, closeRoom } from '../api/index.js';
 import { useWebSocket, getSessionClientId } from '../hooks/useWebSocket.js';
 import { useRoom } from '../hooks/useRoom.js';
@@ -8,6 +9,7 @@ import VideoPlayer from '../components/VideoPlayer.jsx';
 import UserList from '../components/UserList.jsx';
 import ChatBox from '../components/ChatBox.jsx';
 import ProfileModal from '../components/ProfileModal.jsx';
+import ProfileBadge from '../components/ProfileBadge.jsx';
 import {
   ArrowLeft,
   Loader2,
@@ -21,11 +23,22 @@ import {
   Keyboard,
   X,
   Power,
+  Zap,
+  Globe,
+  Upload,
+  PanelRightClose,
+  PanelRightOpen,
 } from 'lucide-react';
 
 export default function Room() {
   const { roomId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Local File & P2P Broadcast State
+  const [localFile, setLocalFile] = useState(() => window.__wt_p2p_file || null);
+  const [localStream, setLocalStream] = useState(null);
+  const filePickerRef = useRef(null);
 
   // Profile state — NO default 'Host' or 'Guest' name!
   const [userName, setUserName] = useState(getProfileName);
@@ -34,13 +47,17 @@ export default function Room() {
 
   const [streamReady, setStreamReady] = useState(false);
   const [error, setError] = useState('');
-  const [lastWsMsg, setLastWsMsg] = useState(null);
-  const [toasts, setToasts] = useState([]);
+    const [toasts, setToasts] = useState([]);
   const pollRef = useRef(null);
 
   // Clean Sidebar state: 'chat' | 'members'
   const [activeTab, setActiveTab] = useState('chat');
   const [unreadChat, setUnreadChat] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const sidebarOpenRef = useRef(sidebarOpen);
+  sidebarOpenRef.current = sidebarOpen;
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   const [copiedLink, setCopiedLink] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -58,6 +75,9 @@ export default function Room() {
   }, [roomId]);
 
   const { room, applyMessage } = useRoom(initialRoom);
+
+  const handleWebRTCMessageRef = useRef(null);
+  const videoPlayerRef = useRef(null);
 
   const handleMessage = useCallback(
     (msg) => {
@@ -78,18 +98,21 @@ export default function Room() {
         return;
       }
 
-      // If a chat message arrives while on another tab, show unread badge
+      // If a chat message arrives while on another tab or sidebar collapsed, show unread badge
       if (msg.type === 'chat') {
-        setActiveTab((currentTab) => {
-          if (currentTab !== 'chat') {
-            setUnreadChat((prev) => prev + 1);
-          }
-          return currentTab;
-        });
+        if (!sidebarOpenRef.current || activeTabRef.current !== 'chat') {
+          setUnreadChat((prev) => prev + 1);
+        }
       }
 
-      setLastWsMsg(msg);
-      applyMessage(msg);
+      if (msg.type.startsWith("webrtc_") || msg.type === "host_changed") {
+        handleWebRTCMessageRef.current?.(msg);
+      }
+      // Route playback sync messages to VideoPlayer
+      if (['play', 'pause', 'seek', 'sync_tick', 'room_state'].includes(msg.type)) {
+        videoPlayerRef.current?.handleSyncMessage(msg);
+      }
+            applyMessage(msg);
     },
     [applyMessage, myUserId]
   );
@@ -101,8 +124,65 @@ export default function Room() {
     handleMessage
   );
 
+  const isTunnel = Boolean(room?.streamType === 'tunnel' || (room?.movie && (room.movie.startsWith('http://') || room.movie.startsWith('https://'))));
+  const isP2P = !isTunnel && Boolean(room?.streamType === 'p2p' || room?.movie === 'p2p-stream');
+  const isTorrent = !isTunnel && Boolean(room?.streamType === 'torrent');
+
+  // Precise host detection (User is host ONLY if matching hostId, creatorId, or user.isHost)
+  const isHost = Boolean(
+    room && (
+      (room.hostId && room.hostId === myUserId) ||
+      (room.creatorId && room.creatorId === myUserId) ||
+      (room.users && room.users.find((u) => u.id === myUserId)?.isHost)
+    )
+  );
+
+  // WebRTC Peer-to-Peer Engine
+  const {
+    remoteStream,
+    connectionState,
+    connectedViewersCount,
+    handleWebRTCMessage
+  } = useWebRTC({
+    isHost,
+    isP2P,
+    localStream,
+    send,
+    hostId: room?.hostId,
+    myUserId,
+    connected,
+  });
+
+  useEffect(() => {
+    handleWebRTCMessageRef.current = handleWebRTCMessage;
+  }, [handleWebRTCMessage]);
+
+  const localBlobUrl = useMemo(() => {
+    if (!localFile) return null;
+    return URL.createObjectURL(localFile);
+  }, [localFile]);
+
+  useEffect(() => {
+    return () => {
+      if (localBlobUrl) {
+        URL.revokeObjectURL(localBlobUrl);
+      }
+    };
+  }, [localBlobUrl]);
+
+  // Stop host tunnel ONLY when navigating away from the room page completely
+  useEffect(() => {
+    return () => {
+      window.electronAPI?.stopHostTunnel?.();
+    };
+  }, []);
+
   useEffect(() => {
     if (streamReady) return;
+    if (isP2P || isTorrent || isTunnel) {
+      setStreamReady(true);
+      return;
+    }
     const check = async () => {
       const status = await getStreamStatus(roomId).catch(() => ({ ready: false }));
       if (status.ready) {
@@ -113,7 +193,7 @@ export default function Room() {
     check();
     pollRef.current = setInterval(check, 2000);
     return () => clearInterval(pollRef.current);
-  }, [roomId, streamReady]);
+  }, [roomId, streamReady, isP2P, isTorrent, isTunnel]);
 
   function addToast(msg, type = 'info') {
     const id = Date.now() + Math.random();
@@ -133,6 +213,9 @@ export default function Room() {
   async function handleCloseRoom() {
     setClosing(true);
     try {
+      if (isTunnel) {
+        window.electronAPI?.stopHostTunnel?.();
+      }
       send('close_room', {});
       await closeRoom(roomId, myUserId).catch(() => {});
       addToast('Room closed');
@@ -155,7 +238,10 @@ export default function Room() {
   }
 
   async function copyRoomLink() {
-    const url = `${window.location.origin}/watch/${roomId}`;
+    const serverUrl = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "") : "";
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:";
+    const baseUrl = (isLocal && serverUrl) ? serverUrl : window.location.origin;
+    const url = `${baseUrl}/watch/${roomId}`;
     try {
       await navigator.clipboard.writeText(url);
     } catch {
@@ -171,13 +257,7 @@ export default function Room() {
     setTimeout(() => setCopiedLink(false), 2000);
   }
 
-  // Robust host detection
-  const isHost = Boolean(
-    (room?.hostId && room.hostId === myUserId) ||
-    (room?.users?.find((u) => u.id === myUserId)?.isHost) ||
-    (room?.users?.length === 1) ||
-    (room?.users && !room.users.some((u) => u.isHost))
-  );
+// Host state already computed above
 
   const hostUser = room?.users?.find((u) => u.isHost || u.id === room?.hostId);
   const hostName = hostUser?.name || 'Host';
@@ -227,6 +307,28 @@ export default function Room() {
     }
   }
 
+  function toggleSidebar() {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      if (next && activeTab === 'chat') {
+        setUnreadChat(0);
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName)) return;
+      if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeTab]);
+
   if (error) {
     return (
       <div
@@ -267,7 +369,8 @@ export default function Room() {
   }
 
   // Direct progressive streaming endpoint
-  const videoSrc = streamReady ? `/api/rooms/${roomId}/video` : null;
+  const serverUrl = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "") : "";
+  const videoSrc = isTunnel ? ((isHost && window.__hostLocalStreamUrl) ? window.__hostLocalStreamUrl : room.movie) : (streamReady ? `${serverUrl}/api/rooms/${roomId}/video` : null);
 
   return (
     <div className="room-page-wrapper">
@@ -316,9 +419,56 @@ export default function Room() {
               Viewer
             </span>
           )}
+
+          {isP2P && (
+            <span
+              className="badge"
+              style={{
+                background: "rgba(234, 179, 8, 0.12)",
+                color: "#eab308",
+                border: "1px solid rgba(234, 179, 8, 0.3)",
+                padding: "2px 7px",
+                fontSize: "0.6875rem",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <Zap size={11} />
+              P2P WebRTC
+            </span>
+          )}
+          {isTorrent && (
+            <span
+              className="badge"
+              style={{
+                background: "rgba(59, 130, 246, 0.12)",
+                color: "#3b82f6",
+                border: "1px solid rgba(59, 130, 246, 0.3)",
+                padding: "2px 7px",
+                fontSize: "0.6875rem",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <Zap size={11} />
+              WebTorrent
+            </span>
+          )}
         </div>
 
         <div className="room-topbar-right">
+          {/* Profile Badge with dropdown & Sign Out */}
+          {userName && (
+            <ProfileBadge
+              name={userName}
+              onSignOut={() => {
+                navigate("/dashboard");
+              }}
+            />
+          )}
+
           {/* Invite Link Button */}
           <button
             className="btn btn-secondary btn-sm room-topbar-btn"
@@ -327,6 +477,19 @@ export default function Room() {
           >
             {copiedLink ? <Check size={14} color="var(--success)" /> : <Link2 size={14} />}
             <span>{copiedLink ? 'Copied!' : 'Invite Link'}</span>
+          </button>
+
+          {/* Toggle Sidebar Button (Cinema Mode) */}
+          <button
+            className={`btn btn-sm room-topbar-btn ${sidebarOpen ? "btn-ghost" : "btn-secondary"}`}
+            onClick={toggleSidebar}
+            title={sidebarOpen ? 'Collapse sidebar (Cinema Mode)' : 'Show Chat & Members'}
+          >
+            {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+            <span className="room-topbar-btn-label">{sidebarOpen ? 'Hide Chat' : 'Chat'}</span>
+            {!sidebarOpen && unreadChat > 0 && (
+              <span className="room-topbar-badge">{unreadChat}</span>
+            )}
           </button>
 
           {/* Stop Room (Host) or Leave Room */}
@@ -356,7 +519,7 @@ export default function Room() {
       <div className="layout-room">
         <div className="room-main">
           {/* Video Player Container */}
-          <div className="player-container">
+          <div className="player-container" style={{ position: "relative" }}>
             {!streamReady && (
               <div
                 style={{
@@ -372,10 +535,75 @@ export default function Room() {
               </div>
             )}
 
+            {/* Host Local File Picker Overlay (if host reloaded or needs to pick file) */}
+            {isP2P && isHost && !localFile && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  zIndex: 25,
+                  background: "var(--bg-card)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "var(--sp-6)",
+                  textAlign: "center",
+                }}
+              >
+                <div
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: "50%",
+                    background: "rgba(234, 179, 8, 0.12)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginBottom: "var(--sp-4)",
+                  }}
+                >
+                  <Zap size={28} color="#eab308" />
+                </div>
+                <h3 style={{ fontSize: "1.25rem", marginBottom: "8px", color: "var(--text-1)" }}>
+                  Select Local Video to Broadcast
+                </h3>
+                <p style={{ color: "var(--text-2)", maxWidth: 420, fontSize: "0.875rem", marginBottom: "var(--sp-5)", lineHeight: 1.5 }}>
+                  Choose the video file ({room.movieName || room.name}) from your device to begin direct peer-to-peer streaming to room viewers.
+                </p>
+                <input
+                  type="file"
+                  ref={filePickerRef}
+                  accept=".mp4,.mkv,.webm,.mov,.avi"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) setLocalFile(file);
+                  }}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={() => filePickerRef.current?.click()}
+                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  <Upload size={16} /> Choose File & Begin Broadcast
+                </button>
+              </div>
+            )}
+
             <VideoPlayer
+              ref={videoPlayerRef}
               src={videoSrc}
+              streamObject={isP2P && !isHost ? remoteStream : null}
+              isP2P={isP2P}
+              isTorrent={isTorrent}
+              torrentMagnet={isTorrent ? room.movie : null}
+              p2pStatus={{ connectionState, viewersCount: connectedViewersCount }}
+              onStreamReady={isP2P && isHost ? setLocalStream : null}
               isHost={isHost}
-              wsMsg={lastWsMsg}
               initialTime={room?.currentTime || 0}
               initialPlaying={room?.playing || false}
               wasPlayingBeforeDisconnect={Boolean(room?.wasPlayingBeforeHostDisconnect || room?.hostDisconnected)}
@@ -388,17 +616,16 @@ export default function Room() {
         </div>
 
         {/* Clean Right Sidebar */}
-        <div className="room-sidebar clean-sidebar">
+        <div className={`room-sidebar clean-sidebar ${sidebarOpen ? "" : "collapsed"}`}>
           {/* Clean Segmented Header Tabs */}
           <div className="clean-sidebar-header">
             <div className="sidebar-tabs" style={{ border: 'none', background: 'transparent', flex: 1, padding: 0 }}>
               <button
                 className={`sidebar-tab ${activeTab === 'chat' ? 'active' : ''}`}
                 onClick={() => handleTabSelect('chat')}
-                style={{ borderRadius: 'var(--r-md)', padding: '6px 12px' }}
               >
-                <MessageSquare size={14} />
-                Chat
+                <MessageSquare size={13} />
+                <span>Chat</span>
                 {unreadChat > 0 && activeTab !== 'chat' && (
                   <span
                     style={{
@@ -421,14 +648,20 @@ export default function Room() {
               <button
                 className={`sidebar-tab ${activeTab === 'members' ? 'active' : ''}`}
                 onClick={() => handleTabSelect('members')}
-                style={{ borderRadius: 'var(--r-md)', padding: '6px 12px' }}
               >
-                <Users size={14} />
-                Members
+                <Users size={13} />
+                <span>Members</span>
                 <span className="sidebar-tab-badge">{room.users?.length || 0}</span>
               </button>
             </div>
 
+            <button
+              className="sidebar-action-btn sidebar-collapse-btn"
+              onClick={() => setSidebarOpen(false)}
+              title="Collapse sidebar (Cinema Mode)"
+            >
+              <PanelRightClose size={13} />
+            </button>
             <button
               className="sidebar-action-btn sidebar-shortcuts-btn"
               onClick={() => setShowShortcuts((v) => !v)}
@@ -448,7 +681,7 @@ export default function Room() {
                 hostId={room.hostId}
               />
             ) : (
-              <div style={{ padding: 'var(--sp-4)', flex: 1, overflowY: 'auto' }}>
+              <div style={{ padding: '8px 10px', flex: 1, overflowY: 'auto' }}>
                 <UserList users={room.users} hostId={room.hostId} currentUserId={myUserId} />
               </div>
             )}
@@ -475,6 +708,7 @@ export default function Room() {
             </div>
             <div className="modal-body" style={{ padding: 'var(--sp-4)', gap: 'var(--sp-2)' }}>
               {[
+                { key: 'C', desc: 'Toggle Sidebar / Cinema Mode' },
                 { key: 'Space / K', desc: 'Play / Pause (Host)' },
                 { key: '← / →', desc: 'Skip 5s (Host)' },
                 { key: 'J / L', desc: 'Skip 10s (Host)' },

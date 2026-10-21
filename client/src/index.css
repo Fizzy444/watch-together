@@ -618,6 +618,20 @@ p {
   transition: all var(--t-fast);
 }
 
+.room-topbar-badge {
+  background: var(--primary);
+  color: var(--primary-text);
+  font-size: 0.625rem;
+  font-weight: 700;
+  padding: 0 5px;
+  height: 16px;
+  border-radius: var(--r-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+}
+
 .room-main {
   flex: 1 1 0;
   min-height: 0;
@@ -627,12 +641,27 @@ p {
   position: relative;
 }
 
+/* Sidebar with desktop collapsible support */
 .room-sidebar {
   width: 275px;
+  min-width: 275px;
+  max-width: 275px;
   background: var(--bg-card);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
+  transition: width 200ms ease, min-width 200ms ease, opacity 150ms ease;
+  overflow: hidden;
+}
+
+.room-sidebar.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  border-left: none !important;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* ── Video Player ─────────────────────────────────────────── */
@@ -794,6 +823,12 @@ p {
   border-color: var(--primary-border);
   color: var(--primary);
   background: var(--primary-subtle);
+}
+.sidebar-tab-badge.active-badge {
+  background: var(--primary);
+  color: var(--primary-text);
+  border: none;
+  font-weight: 700;
 }
 
 .sidebar-action-btn {
@@ -958,6 +993,17 @@ p {
 }
 .chat-input-bar input {
   flex: 1;
+}
+
+.chat-send-btn {
+  height: 32px;
+  width: 32px;
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  flex-shrink: 0;
 }
 
 /* ── Profile Badge (No sign-up / permanent identity) ──────── */
@@ -1238,6 +1284,10 @@ p {
     display: none !important;
   }
 
+  .room-sidebar.collapsed {
+    display: none !important;
+  }
+
   .landing-mock-grid {
     grid-template-columns: 1fr !important;
   }
@@ -1380,5 +1430,9 @@ p {
     height: 100dvh;
     border-top: none;
     border-left: 1px solid var(--border);
+  }
+
+  .room-sidebar.collapsed {
+    display: none !important;
   }
 }

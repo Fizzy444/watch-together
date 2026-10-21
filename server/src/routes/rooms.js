@@ -18,9 +18,39 @@ router.get('/', (_req, res) => {
   res.json(getAllRooms());
 });
 
-// POST /api/rooms — create a new room
+// POST /api/rooms — create a new room (supports both Server Library & WebRTC P2P)
 router.post('/', async (req, res) => {
-  const { movie, name, clientId } = req.body;
+  const { movie, name, clientId, isP2P, streamType } = req.body;
+
+  if (streamType === 'torrent') {
+    const movieTitle = name || 'Torrent Stream';
+    const room = createRoom(movie, movieTitle, name, clientId, 'torrent');
+    return res.json({
+      roomId: room.id,
+      url: `/watch/${room.id}`,
+      ...roomPublicView(room),
+    });
+  }
+
+  if (isP2P || streamType === 'p2p') {
+    const movieTitle = (movie && movie.trim() && movie !== 'p2p-stream') ? movie.trim() : name || 'Live P2P Broadcast';
+    const room = createRoom('p2p-stream', movieTitle, name, clientId, 'p2p');
+    return res.json({
+      roomId: room.id,
+      url: `/watch/${room.id}`,
+      ...roomPublicView(room),
+    });
+  }
+
+  if (streamType === 'tunnel' || (movie && (movie.startsWith('http://') || movie.startsWith('https://')))) {
+    const movieTitle = name || 'Host Cloudflare Stream';
+    const room = createRoom(movie, movieTitle, name, clientId, 'tunnel');
+    return res.json({
+      roomId: room.id,
+      url: `/watch/${room.id}`,
+      ...roomPublicView(room),
+    });
+  }
 
   if (!movie) {
     return res.status(400).json({ error: 'movie filename is required' });
@@ -40,9 +70,7 @@ router.post('/', async (req, res) => {
 
   // Create room with custom name if provided
   const movieName = path.basename(movie, ext);
-  const room = createRoom(movie, movieName, name, clientId);
-
-  // Direct progressive streaming is used by default (0 extra disk space)
+  const room = createRoom(movie, movieName, name, clientId, 'server');
 
   res.json({
     roomId: room.id,
@@ -83,6 +111,26 @@ router.get('/:id/stream/status', (req, res) => {
   const room = getRoom(req.params.id);
   if (!room) return res.status(404).json({ error: 'Room not found' });
 
+  if (room.streamType === 'p2p') {
+    return res.json({
+      ready: true,
+      directPlay: true,
+      isP2P: true,
+      streamType: 'p2p',
+      movie: room.movie,
+    });
+  }
+
+  if (room.streamType === 'tunnel' || (room.movie && (room.movie.startsWith('http://') || room.movie.startsWith('https://')))) {
+    return res.json({
+      ready: true,
+      directPlay: true,
+      isTunnel: true,
+      streamType: 'tunnel',
+      movie: room.movie,
+    });
+  }
+
   const moviePath = path.join(MEDIA_DIR, room.movie);
   const fileExists = fs.existsSync(moviePath);
   const playlist = path.join(HLS_DIR, req.params.id, 'index.m3u8');
@@ -93,6 +141,8 @@ router.get('/:id/stream/status', (req, res) => {
     ready: fileExists,
     directPlay: fileExists,
     hlsReady,
+    isP2P: false,
+    streamType: 'server',
     movie: room.movie,
   });
 });

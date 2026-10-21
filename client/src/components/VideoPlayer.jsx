@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react';
 import Hls from 'hls.js';
+import WebTorrent from 'webtorrent/dist/webtorrent.min.js';
 import {
   Play,
   Pause,
@@ -10,6 +11,7 @@ import {
   RotateCcw,
   RotateCw,
   ShieldAlert,
+  Zap,
 } from 'lucide-react';
 
 // Sync thresholds (seconds)
@@ -25,10 +27,15 @@ function formatTime(s) {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-export default function VideoPlayer({
+const VideoPlayer = forwardRef(function VideoPlayer({
   src,
+  streamObject = null,
+  isP2P = false,
+  p2pStatus = null,
+  isTorrent = false,
+  torrentMagnet = null,
+  onStreamReady = null,
   isHost,
-  wsMsg,
   initialTime = 0,
   initialPlaying = false,
   wasPlayingBeforeDisconnect = false,
@@ -36,7 +43,7 @@ export default function VideoPlayer({
   onPause,
   onSeek,
   onTimeUpdate,
-}) {
+}, ref) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const isHostRef = useRef(isHost);
@@ -50,6 +57,9 @@ export default function VideoPlayer({
   const [buffering, setBuffering] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(false);
   const hideControlsTimer = useRef(null);
+  const torrentSrcSetRef = useRef(false);
+  const [torrentStatusText, setTorrentStatusText] = useState("");
+  const [torrentError, setTorrentError] = useState("");
 
   const bumpControls = useCallback(() => {
     setControlsVisible(true);
@@ -77,6 +87,153 @@ export default function VideoPlayer({
     });
   }, [bumpControls]);
   const [hostReconnecting, setHostReconnecting] = useState(false);
+
+  // WebRTC remote streamObject attachment (Viewer in P2P mode)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (streamObject) {
+      console.log("[VideoPlayer] Attaching WebRTC streamObject to video element");
+      video.srcObject = streamObject;
+      const playPromise = video.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn("[VideoPlayer] Autoplay prevented by browser, muting to allow initial render:", err);
+          video.muted = true;
+          setMuted(true);
+          video.play().catch(() => {});
+        });
+      }
+      return () => {
+        video.srcObject = null;
+      };
+    }
+  }, [streamObject]);
+
+  // WebTorrent / Electron Initialization
+  useEffect(() => {
+    if (!isTorrent || !torrentMagnet || !videoRef.current) return;
+    
+    let isCancelled = false;
+
+    // Electron Desktop App Mode
+    if (window.electronAPI) {
+      console.log("[VideoPlayer] Initializing Native WebTorrent via Electron...");
+      setTorrentStatusText("Connecting to BitTorrent swarm (finding seeders)...");
+      setTorrentError("");
+
+      const removeProgress = window.electronAPI.onTorrentProgress?.((data) => {
+        if (isCancelled) return;
+        if (!data.hasMetadata) {
+          if (data.numPeers > 0) {
+            setTorrentStatusText(`Connected to ${data.numPeers} seeder${data.numPeers === 1 ? '' : 's'} • Finding video metadata...`);
+          } else {
+            setTorrentStatusText("Connecting to BitTorrent swarm (finding seeders)...");
+          }
+        } else {
+          const speedKB = (data.downloadSpeed / 1024).toFixed(0);
+          setTorrentStatusText(`Buffering video from ${data.numPeers} seeder${data.numPeers === 1 ? '' : 's'} (${speedKB} KB/s)...`);
+        }
+      });
+
+      const removeError = window.electronAPI.onTorrentError?.((err) => {
+        if (isCancelled) return;
+        console.error("Electron Torrent Error:", err);
+        const msg = typeof err === 'string' ? err : err?.message || 'Torrent error occurred';
+        if (!msg.includes('reply was never sent') && !msg.includes('Torrent cancelled')) {
+          setTorrentError(msg);
+        }
+      });
+
+      window.electronAPI.startTorrent(torrentMagnet).then((data) => {
+        if (isCancelled) return;
+        console.log("[VideoPlayer] Native stream ready:", data.streamUrl);
+        setTorrentStatusText(`Buffering ${data.fileName}...`);
+        const video = videoRef.current;
+        if (video) {
+          torrentSrcSetRef.current = true;
+          video.src = data.streamUrl;
+        }
+      }).catch(err => {
+        if (isCancelled) return;
+        const msg = err?.message || 'Failed to start torrent stream';
+        if (!msg.includes('reply was never sent') && !msg.includes('Torrent cancelled')) {
+          console.error("Electron Torrent Error:", err);
+          setTorrentError(msg);
+        }
+      });
+
+      return () => {
+        isCancelled = true;
+        torrentSrcSetRef.current = false;
+        removeProgress?.();
+        removeError?.();
+        window.electronAPI.stopTorrent();
+      };
+    } 
+    
+    // Web Browser Fallback Mode (WebRTC)
+    console.log("[VideoPlayer] Initializing Browser WebTorrent for magnet:", torrentMagnet);
+    const client = new WebTorrent();
+    
+    client.on('error', (err) => {
+      console.error('[WebTorrent] Error:', err);
+    });
+
+    client.add(torrentMagnet, (torrent) => {
+      if (isCancelled) return;
+      console.log("[WebTorrent] Torrent added, metadata ready.");
+      
+      let largestFile = torrent.files[0];
+      for (const file of torrent.files) {
+        if (file.length > largestFile.length) {
+          largestFile = file;
+        }
+      }
+      
+      largestFile.renderTo(videoRef.current, { autoplay: false }, (err) => {
+        if (err) console.error('[WebTorrent] renderTo error:', err);
+      });
+    });
+
+    return () => {
+      isCancelled = true;
+      console.log("[VideoPlayer] Destroying WebTorrent client");
+      client.destroy();
+    };
+  }, [isTorrent, torrentMagnet]);
+
+  // Host stream capture listener (triggers as soon as metadata/canplay/play is ready)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !onStreamReady || !isHost) return;
+
+    const tryCapture = () => {
+      if (video.readyState >= 1) {
+        try {
+          const stream = video.captureStream ? video.captureStream() : (video.mozCaptureStream ? video.mozCaptureStream() : null);
+          if (stream && stream.getTracks().length > 0) {
+            console.log("[VideoPlayer] Captured local host stream for P2P, tracks:", stream.getTracks().length);
+            onStreamReady(stream);
+          }
+        } catch (err) {
+          console.warn("[VideoPlayer] captureStream error:", err);
+        }
+      }
+    };
+
+    tryCapture();
+    video.addEventListener("loadedmetadata", tryCapture);
+    video.addEventListener("canplay", tryCapture);
+    video.addEventListener("play", tryCapture);
+
+    return () => {
+      video.removeEventListener("loadedmetadata", tryCapture);
+      video.removeEventListener("canplay", tryCapture);
+      video.removeEventListener("play", tryCapture);
+    };
+  }, [src, isHost, onStreamReady]);
 
   // Play-to-pause catchup for lagging viewers
   const pendingPauseTarget = useRef(null);
@@ -169,6 +326,17 @@ export default function VideoPlayer({
 
     const onLoadedMetadata = () => {
       setDuration(video.duration);
+      if (isHostRef.current && onStreamReady) {
+        try {
+          const stream = video.captureStream ? video.captureStream() : (video.mozCaptureStream ? video.mozCaptureStream() : null);
+          if (stream) {
+            console.log("[VideoPlayer] Local stream captured via captureStream");
+            onStreamReady(stream);
+          }
+        } catch (err) {
+          console.warn("[VideoPlayer] captureStream failed:", err);
+        }
+      }
       if (!hasInitializedTime.current) {
         if (pendingInitialTime.current > 0) {
           video.currentTime = pendingInitialTime.current;
@@ -245,12 +413,13 @@ export default function VideoPlayer({
     };
   }, [onTimeUpdate]);
 
-  // Buttery-smooth WebSocket sync dispatcher
-  useEffect(() => {
-    if (!wsMsg || !videoRef.current) return;
-    const video = videoRef.current;
+  // Expose imperative handle for sync message dispatch
+  useImperativeHandle(ref, () => ({
+    handleSyncMessage(wsMsg) {
+      if (!wsMsg || !videoRef.current) return;
+      const video = videoRef.current;
 
-    switch (wsMsg.type) {
+      switch (wsMsg.type) {
       case 'room_state': {
         const roomState = wsMsg.room;
         if (roomState && !hasInitializedTime.current) {
@@ -364,7 +533,8 @@ export default function VideoPlayer({
         break;
       }
     }
-  }, [wsMsg]);
+    }
+  }));
 
   // Play / Pause toggle
   const handlePlayPause = useCallback(() => {
@@ -550,8 +720,21 @@ export default function VideoPlayer({
       <video
         ref={videoRef}
         playsInline
-        preload="auto"
+        preload="metadata"
         onClick={handlePlayPause}
+        onError={(e) => {
+          console.warn("[VideoPlayer] Video element error event:", e.target?.error?.code, e.target?.error?.message);
+          // Only show a decode error if we actually set a real stream URL.
+          // The video element fires an error naturally when it has no src (empty src = MEDIA_ERR_SRC_NOT_SUPPORTED).
+          if (isTorrent && torrentSrcSetRef.current) {
+            const code = e.target?.error?.code;
+            // MEDIA_ERR_SRC_NOT_SUPPORTED = 4 (unplayable format)
+            // MEDIA_ERR_DECODE = 3
+            if (code === 4 || code === 3) {
+              setTorrentError("Video decoding error: The video format inside this torrent cannot be played by the HTML5 video engine.");
+            }
+          }
+        }}
         style={{
           width: '100%',
           height: '100%',
@@ -559,6 +742,106 @@ export default function VideoPlayer({
           cursor: isHost ? 'pointer' : 'default',
         }}
       />
+
+      {/* P2P Badges & Overlays */}
+      {isP2P && isHost && (
+        <div
+          style={{
+            position: "absolute",
+            top: "var(--sp-4)",
+            left: "var(--sp-4)",
+            zIndex: 10,
+            background: "rgba(0, 0, 0, 0.75)",
+            border: "1px solid rgba(16, 185, 129, 0.4)",
+            borderRadius: "var(--r-full)",
+            padding: "5px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            color: "#10b981",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            backdropFilter: "blur(8px)",
+            pointerEvents: "none",
+          }}
+        >
+          <Zap size={13} />
+          <span>Broadcasting P2P • {p2pStatus?.viewersCount || 0} Viewer{p2pStatus?.viewersCount === 1 ? "" : "s"}</span>
+        </div>
+      )}
+
+      {isP2P && !isHost && streamObject && (
+        <div
+          style={{
+            position: "absolute",
+            top: "var(--sp-4)",
+            left: "var(--sp-4)",
+            zIndex: 10,
+            background: "rgba(0, 0, 0, 0.75)",
+            border: "1px solid rgba(59, 130, 246, 0.4)",
+            borderRadius: "var(--r-full)",
+            padding: "5px 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            color: "#60a5fa",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            backdropFilter: "blur(8px)",
+            pointerEvents: "none",
+          }}
+        >
+          <Zap size={13} />
+          <span>Live P2P Stream</span>
+        </div>
+      )}
+
+            {(isP2P && !isHost && !streamObject) || (isTorrent && !duration) ? (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 12,
+            background: "rgba(10, 10, 10, 0.95)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "14px",
+            padding: "32px",
+            textAlign: "center",
+          }}
+        >
+          {torrentError ? (
+            <>
+              <ShieldAlert size={42} color="#ef4444" />
+              <div style={{ fontSize: "1rem", fontWeight: 600, color: "#f87171", maxWidth: 500, lineHeight: 1.5 }}>
+                {torrentError}
+              </div>
+              <div style={{ fontSize: "0.8125rem", color: "var(--text-3)", maxWidth: 460 }}>
+                Tip: Torrents must contain direct playable video files (.mp4, .mkv, .webm), not raw disk images (.iso) or compressed archives (.rar, .zip).
+              </div>
+            </>
+          ) : (
+            <>
+              <Loader2 className="spinner" size={36} color="var(--primary)" />
+              <div style={{ fontSize: "0.9375rem", fontWeight: 600, color: "var(--text-1)" }}>
+                {isTorrent 
+                  ? (torrentStatusText || "Connecting to Torrent Swarm (finding seeders)...") 
+                  : p2pStatus?.connectionState === "connecting"
+                    ? "Connecting to Host P2P Stream..."
+                    : "Waiting for Host to begin broadcast..."}
+              </div>
+              <div style={{ fontSize: "0.8125rem", color: "var(--text-3)" }}>
+                {isTorrent ? "Native High-Speed BitTorrent Streaming" : "Encrypted direct device-to-device WebRTC"}
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
 
       {/* Host Reconnecting Banner (guests only) */}
       {hostReconnecting && !isHost && (
@@ -763,4 +1046,6 @@ export default function VideoPlayer({
       </div>
     </div>
   );
-}
+});
+
+export default VideoPlayer;

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { User, X, Check } from 'lucide-react';
-import { saveProfileName } from '../utils/profile.js';
+import { User, X, Check, LogOut } from 'lucide-react';
+import { logoutApi } from '../utils/auth.js';
+import { saveProfileName, clearProfileName } from '../utils/profile.js';
 
 export default function ProfileModal({
   isOpen,
@@ -111,21 +112,40 @@ export default function ProfileModal({
             </div>
           </div>
 
-          <div className="modal-footer">
-            {!isMandatory && (
-              <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
-                Cancel
+          <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            {currentName && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={async () => {
+                  try { await logoutApi(); } catch {}
+                  clearProfileName();
+                  window.dispatchEvent(new CustomEvent("wt-auth-changed", { detail: { user: null, token: null } }));
+                  onClose?.();
+                }}
+                style={{ color: "var(--error)", display: "inline-flex", alignItems: "center", gap: 6 }}
+                title="Sign out of your profile"
+              >
+                <LogOut size={14} />
+                Sign Out
               </button>
             )}
-            <button
-              type="submit"
-              className="btn btn-primary btn-sm"
-              disabled={!name.trim()}
-              style={{ minWidth: 100 }}
-            >
-              <Check size={14} style={{ marginRight: 4 }} />
-              {currentName ? 'Save' : 'Continue'}
-            </button>
+            <div style={{ display: "flex", gap: "var(--sp-2)", marginLeft: "auto" }}>
+              {!isMandatory && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+                  Cancel
+                </button>
+              )}
+              <button
+                type="submit"
+                className="btn btn-primary btn-sm"
+                disabled={!name.trim()}
+                style={{ minWidth: 100 }}
+              >
+                <Check size={14} style={{ marginRight: 4 }} />
+                {currentName ? "Save" : "Continue"}
+              </button>
+            </div>
           </div>
         </form>
       </div>

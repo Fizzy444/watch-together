@@ -7,20 +7,85 @@
     "dev": "vite --host",
     "build": "vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:dev": "cross-env NODE_ENV=development concurrently \"npm run dev\" \"electron .\"",
+    "electron:build": "vite build && electron-builder"
   },
   "dependencies": {
+    "cloudflared": "^0.7.3",
     "hls.js": "^1.7.3",
     "lucide-react": "^1.47.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.4",
+    "webtorrent": "^3.0.21"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
     "oxlint": "^1.81.0",
     "vite": "^8.3.0"
+  },
+  "main": "main.cjs",
+  "build": {
+    "appId": "com.fizzy444.watchtogether",
+    "productName": "Watch Together",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "main.cjs",
+      "preload.cjs"
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "Watch-Together-${version}-mac.${ext}"
+    },
+    "win": {
+      "target": "nsis",
+      "artifactName": "Watch-Together-Setup-${version}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Video",
+      "maintainer": "Fizzy444 <mr.mithun2521@gmail.com>",
+      "artifactName": "Watch-Together-${version}-linux.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Fizzy444",
+      "repo": "watch-together"
+    },
+    "artifactName": "Watch-Together-${version}-${os}.${ext}",
+    "asarUnpack": [
+      "**/node_modules/cloudflared/**"
+    ]
+  },
+  "allowScripts": {
+    "bufferutil@4.1.0": true,
+    "electron-winstaller@5.4.0": true,
+    "ip-set@3.0.0": true,
+    "node-datachannel@0.32.3": true,
+    "utf-8-validate@6.0.6": true,
+    "utp-native@2.5.3": true
+  },
+  "description": "Watch Together Desktop App - Watch movies together in sync with automated Cloudflare tunnels",
+  "author": "Fizzy444 <mr.mithun2521@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Fizzy444/watch-together.git"
   }
 }
