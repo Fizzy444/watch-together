@@ -7,6 +7,10 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const os = require('os');
+const { spawn, execFile } = require('child_process');
+const util = require('util');
+const execFileAsync = util.promisify(execFile);
 const cloudflared = require('cloudflared');
 const { Tunnel } = cloudflared;
 
@@ -347,8 +351,29 @@ ipcMain.handle('stop-torrent', () => {
 // Host Local Streaming & Cloudflare Tunnel
 let hostVideoServer = null;
 let hostCloudflareTunnel = null;
+let hostFfmpegProcess = null;
+let hostHlsDir = null;
+let currentHostVideoPath = null;
 
 function cleanupHostTunnel() {
+  if (hostFfmpegProcess) {
+    try {
+      console.log('[Host Stream] Killing ffmpeg transcode process...');
+      hostFfmpegProcess.kill('SIGKILL');
+    } catch (e) {
+      console.error('Error killing ffmpeg:', e);
+    }
+    hostFfmpegProcess = null;
+  }
+  if (hostHlsDir) {
+    try {
+      console.log('[Host Stream] Removing HLS temp directory:', hostHlsDir);
+      fs.rmSync(hostHlsDir, { recursive: true, force: true });
+    } catch (e) {
+      console.error('Error deleting HLS temp directory:', e);
+    }
+    hostHlsDir = null;
+  }
   if (hostCloudflareTunnel) {
     try {
       console.log('[Host Tunnel] Stopping Cloudflare Tunnel...');
@@ -369,7 +394,43 @@ function cleanupHostTunnel() {
   }
 }
 
-let currentHostVideoPath = null;
+async function probeVideoFile(filePath) {
+  try {
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'stream=index,codec_type,codec_name',
+      '-of', 'json',
+      filePath,
+    ]);
+    const parsed = JSON.parse(stdout);
+    const audioStreams = (parsed.streams || []).filter((s) => s.codec_type === 'audio');
+    const videoStreams = (parsed.streams || []).filter((s) => s.codec_type === 'video');
+
+    // Supported browser audio codecs: AAC, MP3, Opus, Vorbis, FLAC
+    const BROWSER_AUDIO_CODECS = ['aac', 'mp3', 'opus', 'vorbis', 'flac'];
+    const hasUnsupportedAudio = audioStreams.some((s) => !BROWSER_AUDIO_CODECS.includes(s.codec_name?.toLowerCase()));
+    const ext = path.extname(filePath).toLowerCase();
+    const isMkv = ext === '.mkv';
+
+    return {
+      hasAudio: audioStreams.length > 0,
+      audioCodec: audioStreams[0]?.codec_name || null,
+      needsAudioTranscode: hasUnsupportedAudio,
+      isMkv,
+      videoCodec: videoStreams[0]?.codec_name || null,
+    };
+  } catch (err) {
+    console.warn('[Host Stream] ffprobe error, falling back to direct stream:', err.message);
+    const ext = path.extname(filePath).toLowerCase();
+    return {
+      hasAudio: true,
+      audioCodec: null,
+      needsAudioTranscode: false,
+      isMkv: ext === '.mkv',
+      videoCodec: null,
+    };
+  }
+}
 
 ipcMain.handle('select-video-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -414,6 +475,60 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
   const fileName = path.basename(filePath);
   const ext = path.extname(filePath).toLowerCase();
 
+  event.sender.send('host-tunnel-status', { step: 'analyzing-media', message: 'Analyzing video and audio tracks...' });
+  const probe = await probeVideoFile(filePath);
+  console.log('[Host Stream] Probe results for', fileName, ':', probe);
+
+  // If audio is unsupported (AC-3, DTS, TrueHD, etc.) or container is MKV, remux to HLS with AAC audio
+  const useHls = probe.needsAudioTranscode || probe.isMkv;
+
+  let playlistPath = null;
+  if (useHls) {
+    event.sender.send('host-tunnel-status', { step: 'preparing-audio', message: 'Optimizing audio track (transcoding to stereo AAC)...' });
+    hostHlsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-hls-'));
+    playlistPath = path.join(hostHlsDir, 'index.m3u8');
+    const segmentPattern = path.join(hostHlsDir, 'seg%03d.ts');
+
+    const ffmpegArgs = [
+      '-v', 'warning',
+      '-i', filePath,
+      '-map', '0:v:0',
+      '-map', '0:a:0?',
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-ac', '2',
+      '-sn',
+      '-hls_time', '3',
+      '-hls_list_size', '0',
+      '-hls_segment_filename', segmentPattern,
+      '-f', 'hls',
+      playlistPath,
+    ];
+
+    console.log('[Host Stream] Starting ffmpeg HLS remuxer:', ffmpegArgs.join(' '));
+    hostFfmpegProcess = spawn('ffmpeg', ffmpegArgs);
+
+    hostFfmpegProcess.stderr.on('data', (data) => {
+      console.log('[FFmpeg]', data.toString().trim());
+    });
+
+    hostFfmpegProcess.on('error', (err) => {
+      console.error('[FFmpeg Process Error]', err);
+    });
+
+    hostFfmpegProcess.on('exit', (code) => {
+      console.log(`[FFmpeg] Exited with code ${code}`);
+    });
+
+    // Wait up to 10 seconds for index.m3u8 and the first segment to be generated
+    const waitStart = Date.now();
+    while (!fs.existsSync(playlistPath) || !fs.existsSync(path.join(hostHlsDir, 'seg000.ts'))) {
+      if (Date.now() - waitStart > 10000) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
   let contentType = 'video/mp4';
   if (ext === '.webm') contentType = 'video/webm';
   else if (ext === '.mkv') contentType = 'video/x-matroska';
@@ -435,13 +550,64 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
 
       if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ status: 'ok', file: fileName, size: fileSize }));
+        return res.end(JSON.stringify({ status: 'ok', file: fileName, size: fileSize, hls: useHls }));
       }
 
+      // HLS Streaming Mode
+      if (useHls) {
+        if (req.url === '/index.m3u8' || req.url === '/video') {
+          if (!fs.existsSync(playlistPath)) {
+            res.writeHead(404);
+            return res.end('Playlist not ready');
+          }
+          res.writeHead(200, {
+            'Content-Type': 'application/vnd.apple.mpegurl',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+          });
+          const stream = fs.createReadStream(playlistPath);
+          res.on('close', () => stream.destroy());
+          return stream.pipe(res);
+        }
+
+        if (req.url.endsWith('.ts')) {
+          const segName = path.basename(req.url);
+          const segPath = path.join(hostHlsDir, segName);
+
+          const sendSeg = () => {
+            if (!fs.existsSync(segPath)) {
+              res.writeHead(404);
+              return res.end('Segment not found');
+            }
+            const segStat = fs.statSync(segPath);
+            res.writeHead(200, {
+              'Content-Type': 'video/MP2T',
+              'Content-Length': segStat.size,
+              'Cache-Control': 'public, max-age=86400',
+            });
+            const stream = fs.createReadStream(segPath);
+            res.on('close', () => stream.destroy());
+            stream.pipe(res);
+          };
+
+          if (!fs.existsSync(segPath)) {
+            const waitPoll = Date.now();
+            const interval = setInterval(() => {
+              if (fs.existsSync(segPath) || Date.now() - waitPoll > 3000) {
+                clearInterval(interval);
+                sendSeg();
+              }
+            }, 100);
+            return;
+          } else {
+            return sendSeg();
+          }
+        }
+      }
+
+      // Direct Progressive MP4 streaming mode with range requests
       const range = req.headers.range;
       const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB chunks optimal for Cloudflare Tunnel
 
-      // Handle HEAD requests without writing a body (required by HTTP specs & HTML5 players)
       if (req.method === 'HEAD') {
         if (range) {
           const parts = range.replace(/bytes=/, '').split('-');
@@ -506,7 +672,7 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
 
     hostVideoServer.listen(0, '127.0.0.1', () => {
       const port = hostVideoServer.address().port;
-      console.log(`[Host Server] Video stream ready on local port ${port}`);
+      console.log(`[Host Server] Video stream ready on local port ${port} (mode: ${useHls ? 'HLS' : 'Direct'})`);
 
       event.sender.send('host-tunnel-status', { step: 'creating-tunnel', message: 'Creating secure Cloudflare tunnel...' });
 
@@ -515,7 +681,8 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
 
         hostCloudflareTunnel.once('url', (tunnelUrl) => {
           console.log(`[Host Tunnel] Cloudflare Tunnel established: ${tunnelUrl}`);
-          const streamUrl = `${tunnelUrl}/video`;
+          const streamUrl = useHls ? `${tunnelUrl}/index.m3u8` : `${tunnelUrl}/video`;
+          const localStreamUrl = useHls ? `http://127.0.0.1:${port}/index.m3u8` : `http://127.0.0.1:${port}/video`;
 
           event.sender.send('host-tunnel-status', {
             step: 'ready',
@@ -525,10 +692,11 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
 
           resolve({
             streamUrl,
-            localStreamUrl: `http://127.0.0.1:${port}/video`,
+            localStreamUrl,
             tunnelUrl,
             fileName,
             fileSize,
+            isHls: useHls,
           });
         });
 
@@ -572,6 +740,55 @@ ipcMain.handle('find-matching-subtitles', async (_event, videoPath) => {
   if (!targetPath || !fs.existsSync(targetPath)) {
     return [];
   }
+
+  const results = [];
+
+  // 1. Extract embedded subtitle tracks from container using ffprobe & ffmpeg
+  try {
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 's',
+      '-show_entries', 'stream=index,codec_name:stream_tags=language,title',
+      '-of', 'json',
+      targetPath,
+    ]);
+    const parsed = JSON.parse(stdout);
+    const streams = parsed.streams || [];
+    for (let i = 0; i < streams.length; i++) {
+      const s = streams[i];
+      try {
+        const { stdout: vtt } = await execFileAsync('ffmpeg', [
+          '-v', 'error',
+          '-i', targetPath,
+          '-map', `0:${s.index}`,
+          '-f', 'webvtt',
+          '-',
+        ], { maxBuffer: 10 * 1024 * 1024 });
+
+        if (vtt && vtt.trim().length > 0) {
+          const lang = s.tags?.language || s.tags?.LANGUAGE || 'und';
+          const title = s.tags?.title || s.tags?.TITLE || (lang !== 'und' ? `Track ${i + 1} (${lang.toUpperCase()})` : `Embedded Track ${i + 1}`);
+          results.push({
+            fileName: title,
+            filePath: targetPath,
+            format: 'vtt',
+            content: vtt,
+            isEmbedded: true,
+            streamIndex: s.index,
+            trackNumber: i + 1,
+            language: lang,
+            title,
+          });
+        }
+      } catch (extractErr) {
+        console.warn(`[Subtitles] Could not extract stream ${s.index} (${s.codec_name}):`, extractErr.message);
+      }
+    }
+  } catch (probeErr) {
+    console.warn('[Subtitles] Embedded stream probe failed:', probeErr.message);
+  }
+
+  // 2. Scan folder for local matching .srt or .vtt files with same name
   try {
     const dir = path.dirname(targetPath);
     const videoExt = path.extname(targetPath);
@@ -579,7 +796,6 @@ ipcMain.handle('find-matching-subtitles', async (_event, videoPath) => {
 
     const files = fs.readdirSync(dir);
     const SUB_EXTS = ['.srt', '.vtt'];
-    const matching = [];
 
     for (const f of files) {
       const ext = path.extname(f).toLowerCase();
@@ -590,19 +806,21 @@ ipcMain.handle('find-matching-subtitles', async (_event, videoPath) => {
       if (subBase === videoBase || subBase.startsWith(videoBase)) {
         const fullPath = path.join(dir, f);
         const content = fs.readFileSync(fullPath, 'utf8');
-        matching.push({
+        results.push({
           fileName: f,
           filePath: fullPath,
           format: ext.replace('.', ''),
           content,
+          isEmbedded: false,
+          isAutoDetected: true,
         });
       }
     }
-    return matching;
   } catch (err) {
     console.error('Error finding matching subtitles:', err);
-    return [];
   }
+
+  return results;
 });
 
 ipcMain.handle('select-subtitle-file', async () => {

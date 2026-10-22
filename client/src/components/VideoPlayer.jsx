@@ -403,7 +403,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     for (let i = 0; i < video.textTracks.length; i++) {
       const t = video.textTracks[i];
       if (t.kind === 'subtitles' || t.kind === 'captions' || !t.kind) {
-        if (t.id && t.id.startsWith('ext-')) continue;
+        if (t.id && (t.id.startsWith('ext-') || t.id.startsWith('sub-'))) continue;
         const label = t.label || (t.language ? `Language: ${t.language.toUpperCase()}` : `Track ${i + 1}`);
         found.push({
           id: `embedded-${i}`,
@@ -414,37 +414,69 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         });
       }
     }
-    setEmbeddedTracks(found);
+    if (found.length > 0) {
+      setEmbeddedTracks((prev) => {
+        const extracted = prev.filter((p) => p.blobUrl);
+        const existing = new Set(extracted.map((p) => p.id));
+        const filtered = found.filter((p) => !existing.has(p.id));
+        return [...extracted, ...filtered];
+      });
+    }
   }, []);
 
-  // Auto-detect local matching subtitles (same basename as video) in Electron
+  // Auto-detect local matching subtitles (same basename as video) & embedded tracks in Electron
   useEffect(() => {
     if (!window.electronAPI?.findMatchingSubtitles) return;
     const targetPath = videoPath || (typeof window !== 'undefined' ? window.__hostFilePath : null);
 
     window.electronAPI.findMatchingSubtitles(targetPath).then((matches) => {
       if (!matches || matches.length === 0) return;
-      console.log(`[VideoPlayer] Found ${matches.length} matching subtitle file(s):`, matches.map(m => m.fileName));
+      console.log(`[VideoPlayer] Received ${matches.length} matching subtitle/embedded item(s)`);
 
-      const newTracks = matches.map((m, idx) => {
+      const embeddedFound = [];
+      const externalFound = [];
+
+      matches.forEach((m, idx) => {
         const blobUrl = createVttBlobUrl(m.content, m.format);
         subtitleBlobUrlsRef.current.add(blobUrl);
-        const friendlyLabel = getFriendlySubtitleLabel(m.fileName);
-        return {
-          id: `external-auto-${idx}`,
-          label: friendlyLabel,
-          fileName: m.fileName,
-          format: m.format,
-          blobUrl,
-          isAutoDetected: true,
-        };
+
+        if (m.isEmbedded) {
+          const trackLabel = m.title || (m.language && m.language !== 'und' ? `Track ${m.trackNumber || idx + 1} (${m.language.toUpperCase()})` : `Embedded Track ${m.trackNumber || idx + 1}`);
+          embeddedFound.push({
+            id: `embedded-ext-${m.streamIndex ?? idx}`,
+            label: trackLabel,
+            language: m.language,
+            blobUrl,
+            isEmbedded: true,
+          });
+        } else {
+          const friendlyLabel = getFriendlySubtitleLabel(m.fileName);
+          externalFound.push({
+            id: `external-auto-${idx}`,
+            label: friendlyLabel,
+            fileName: m.fileName,
+            format: m.format,
+            blobUrl,
+            isAutoDetected: true,
+          });
+        }
       });
 
-      setExternalSubtitles((prev) => {
-        const existingNames = new Set(prev.map(p => p.fileName));
-        const filtered = newTracks.filter(n => !existingNames.has(n.fileName));
-        return [...prev, ...filtered];
-      });
+      if (embeddedFound.length > 0) {
+        setEmbeddedTracks((prev) => {
+          const existing = new Set(prev.map((p) => p.id));
+          const filtered = embeddedFound.filter((e) => !existing.has(e.id));
+          return [...prev, ...filtered];
+        });
+      }
+
+      if (externalFound.length > 0) {
+        setExternalSubtitles((prev) => {
+          const existingNames = new Set(prev.map((p) => p.fileName));
+          const filtered = externalFound.filter((n) => !existingNames.has(n.fileName));
+          return [...prev, ...filtered];
+        });
+      }
     }).catch((err) => {
       console.warn("[VideoPlayer] Error finding matching subtitles:", err);
     });
@@ -471,16 +503,39 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     }
 
     if (trackId.startsWith('embedded-')) {
-      const idx = parseInt(trackId.replace('embedded-', ''), 10);
       const existingTracks = video.querySelectorAll('track[data-wt-sub]');
       existingTracks.forEach((t) => t.remove());
 
-      if (video.textTracks) {
+      const embedded = embeddedTracks.find((t) => t.id === trackId);
+      if (embedded && embedded.blobUrl) {
+        if (video.textTracks) {
+          for (let i = 0; i < video.textTracks.length; i++) {
+            video.textTracks[i].mode = 'disabled';
+          }
+        }
+        const trackEl = document.createElement('track');
+        trackEl.kind = 'subtitles';
+        trackEl.label = embedded.label;
+        trackEl.src = embedded.blobUrl;
+        trackEl.srclang = embedded.language || 'en';
+        trackEl.default = true;
+        trackEl.setAttribute('data-wt-sub', 'true');
+        trackEl.setAttribute('id', `sub-${trackId}`);
+
+        video.appendChild(trackEl);
+        trackEl.track.mode = 'showing';
+        showHud({ icon: 'subtitles', text: embedded.label });
+        return;
+      }
+
+      // Fallback for native textTracks
+      const idx = parseInt(trackId.replace('embedded-', ''), 10);
+      if (video.textTracks && !isNaN(idx)) {
         for (let i = 0; i < video.textTracks.length; i++) {
           video.textTracks[i].mode = (i === idx) ? 'showing' : 'disabled';
         }
       }
-      const label = embeddedTracks.find(t => t.id === trackId)?.label || 'Embedded Track';
+      const label = embedded?.label || 'Embedded Track';
       showHud({ icon: 'subtitles', text: label });
       return;
     }
@@ -492,7 +547,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         }
       }
 
-      const sub = externalSubtitles.find(s => s.id === trackId);
+      const sub = externalSubtitles.find((s) => s.id === trackId);
       if (!sub) return;
 
       const existingTracks = video.querySelectorAll('track[data-wt-sub]');
@@ -505,7 +560,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       trackEl.srclang = 'en';
       trackEl.default = true;
       trackEl.setAttribute('data-wt-sub', 'true');
-      trackEl.setAttribute('id', `ext-${trackId}`);
+      trackEl.setAttribute('id', `sub-${trackId}`);
 
       video.appendChild(trackEl);
       trackEl.track.mode = 'showing';
