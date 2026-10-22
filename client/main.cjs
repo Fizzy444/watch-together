@@ -1,5 +1,5 @@
 process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true';
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 
 // Ensure Chromium allows unmuted audio autoplay without requiring initial user gestures
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -80,31 +80,42 @@ let progressInterval = null;
 let stopGraceTimer = null;
 
 function createWindow() {
+  const isDev = !app.isPackaged && process.env.NODE_ENV === 'development';
+
+  if (!isDev) {
+    Menu.setApplicationMenu(null);
+  }
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    autoHideMenuBar: !isDev,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
+      devTools: isDev,
     },
     titleBarStyle: 'hiddenInset',
   });
 
-  const isDev = process.env.NODE_ENV === 'development';
+  if (!isDev) {
+    mainWindow.removeMenu();
+  }
+
   if (isDev) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173');
     mainWindow.webContents.openDevTools();
+
+    // Allow toggling DevTools with Ctrl+Shift+I or F12 only during local development
+    mainWindow.webContents.on("before-input-event", (event, input) => {
+      if (((input.control || input.meta) && input.shift && input.key.toLowerCase() === "i") || input.key === "F12") {
+        mainWindow.webContents.toggleDevTools();
+      }
+    });
   } else {
     mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
   }
-
-  // Allow toggling DevTools with Ctrl+Shift+I or F12 for debugging
-  mainWindow.webContents.on("before-input-event", (event, input) => {
-    if (((input.control || input.meta) && input.shift && input.key.toLowerCase() === "i") || input.key === "F12") {
-      mainWindow.webContents.toggleDevTools();
-    }
-  });
 
   mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription, validatedURL) => {
     console.error(`[Electron] Failed to load ${validatedURL}: ${errorCode} - ${errorDescription}`);
