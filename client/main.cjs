@@ -363,27 +363,17 @@ ipcMain.handle('stop-torrent', () => {
 let hostVideoServer = null;
 let hostCloudflareTunnel = null;
 let hostFfmpegProcess = null;
-let hostHlsDir = null;
 let currentHostVideoPath = null;
 
 function cleanupHostTunnel() {
   if (hostFfmpegProcess) {
     try {
-      console.log('[Host Stream] Killing ffmpeg transcode process...');
+      console.log('[Host Stream] Terminating ffmpeg transcode process...');
       hostFfmpegProcess.kill('SIGKILL');
     } catch (e) {
       console.error('Error killing ffmpeg:', e);
     }
     hostFfmpegProcess = null;
-  }
-  if (hostHlsDir) {
-    try {
-      console.log('[Host Stream] Removing HLS temp directory:', hostHlsDir);
-      fs.rmSync(hostHlsDir, { recursive: true, force: true });
-    } catch (e) {
-      console.error('Error deleting HLS temp directory:', e);
-    }
-    hostHlsDir = null;
   }
   if (hostCloudflareTunnel) {
     try {
@@ -409,7 +399,7 @@ async function probeVideoFile(filePath) {
   try {
     const { stdout } = await execFileAsync('ffprobe', [
       '-v', 'error',
-      '-show_entries', 'stream=index,codec_type,codec_name',
+      '-show_entries', 'format=duration:stream=index,codec_type,codec_name',
       '-of', 'json',
       filePath,
     ]);
@@ -422,8 +412,10 @@ async function probeVideoFile(filePath) {
     const hasUnsupportedAudio = audioStreams.some((s) => !BROWSER_AUDIO_CODECS.includes(s.codec_name?.toLowerCase()));
     const ext = path.extname(filePath).toLowerCase();
     const isMkv = ext === '.mkv';
+    const duration = parseFloat(parsed.format?.duration) || 0;
 
     return {
+      duration,
       hasAudio: audioStreams.length > 0,
       audioCodec: audioStreams[0]?.codec_name || null,
       needsAudioTranscode: hasUnsupportedAudio,
@@ -434,6 +426,7 @@ async function probeVideoFile(filePath) {
     console.warn('[Host Stream] ffprobe error, falling back to direct stream:', err.message);
     const ext = path.extname(filePath).toLowerCase();
     return {
+      duration: 0,
       hasAudio: true,
       audioCodec: null,
       needsAudioTranscode: false,
@@ -482,7 +475,6 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
   }
 
   const stat = fs.statSync(filePath);
-  const fileSize = stat.size;
   const fileName = path.basename(filePath);
   const ext = path.extname(filePath).toLowerCase();
 
@@ -490,61 +482,86 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
   const probe = await probeVideoFile(filePath);
   console.log('[Host Stream] Probe results for', fileName, ':', probe);
 
-  // If audio is unsupported (AC-3, DTS, TrueHD, etc.) or container is MKV, remux to HLS with AAC audio
-  const useHls = probe.needsAudioTranscode || probe.isMkv;
+  // If container is MKV or audio is unsupported (AC-3, DTS, TrueHD, EAC3), remux to fast MP4 with stereo AAC
+  const needsRemux = probe.needsAudioTranscode || probe.isMkv || ext !== '.mp4';
+  let activeServePath = filePath;
 
-  let playlistPath = null;
-  if (useHls) {
-    event.sender.send('host-tunnel-status', { step: 'preparing-audio', message: 'Optimizing audio track (transcoding to stereo AAC)...' });
-    hostHlsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-hls-'));
-    playlistPath = path.join(hostHlsDir, 'index.m3u8');
-    const segmentPattern = path.join(hostHlsDir, 'seg%03d.ts');
+  if (needsRemux) {
+    const cacheDir = path.join(app.getPath('temp'), 'wt-cache');
+    if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
 
-    const ffmpegArgs = [
-      '-v', 'warning',
-      '-i', filePath,
-      '-map', '0:v:0',
-      '-map', '0:a:0?',
-      '-c:v', 'copy',
-      '-c:a', 'aac',
-      '-b:a', '192k',
-      '-ac', '2',
-      '-sn',
-      '-hls_time', '3',
-      '-hls_list_size', '0',
-      '-hls_segment_filename', segmentPattern,
-      '-f', 'hls',
-      playlistPath,
-    ];
+    const safeBase = path.basename(filePath, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const cacheKey = `${stat.size}-${Math.floor(stat.mtimeMs)}`;
+    const remuxedPath = path.join(cacheDir, `${safeBase}-${cacheKey}.mp4`);
 
-    console.log('[Host Stream] Starting ffmpeg HLS remuxer:', ffmpegArgs.join(' '));
-    hostFfmpegProcess = spawn('ffmpeg', ffmpegArgs);
+    if (fs.existsSync(remuxedPath) && fs.statSync(remuxedPath).size > 1024) {
+      console.log('[Host Stream] Reusing existing optimized MP4 from cache:', remuxedPath);
+      event.sender.send('host-tunnel-status', { step: 'cache-hit', message: 'Ready! Loaded optimized video from cache.', progress: 100 });
+      activeServePath = remuxedPath;
+    } else {
+      event.sender.send('host-tunnel-status', { step: 'remuxing', message: 'Optimizing video & audio for playback (0%)...', progress: 0 });
 
-    hostFfmpegProcess.stderr.on('data', (data) => {
-      console.log('[FFmpeg]', data.toString().trim());
-    });
+      const duration = probe.duration || 0;
+      const ffmpegArgs = [
+        '-y',
+        '-i', filePath,
+        '-map', '0:v:0',
+        '-map', '0:a:0?',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-ac', '2',
+        '-movflags', '+faststart',
+        remuxedPath,
+      ];
 
-    hostFfmpegProcess.on('error', (err) => {
-      console.error('[FFmpeg Process Error]', err);
-    });
+      console.log('[Host Stream] Starting fast MP4 remux:', ffmpegArgs.join(' '));
 
-    hostFfmpegProcess.on('exit', (code) => {
-      console.log(`[FFmpeg] Exited with code ${code}`);
-    });
+      await new Promise((resolve, reject) => {
+        const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
+        hostFfmpegProcess = proc;
 
-    // Wait up to 10 seconds for index.m3u8 and the first segment to be generated
-    const waitStart = Date.now();
-    while (!fs.existsSync(playlistPath) || !fs.existsSync(path.join(hostHlsDir, 'seg000.ts'))) {
-      if (Date.now() - waitStart > 10000) break;
-      await new Promise((r) => setTimeout(r, 100));
+        proc.stderr.on('data', (data) => {
+          const str = data.toString();
+          const match = str.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+          if (match && duration > 0) {
+            const currentSec = parseInt(match[1], 10) * 3600 + parseInt(match[2], 10) * 60 + parseFloat(match[3]);
+            const pct = Math.min(99, Math.round((currentSec / duration) * 100));
+            event.sender.send('host-tunnel-status', {
+              step: 'remuxing',
+              message: `Optimizing audio track & container (${pct}%)...`,
+              progress: pct,
+            });
+          }
+        });
+
+        proc.on('error', (err) => {
+          console.error('[FFmpeg Remux Error]', err);
+          hostFfmpegProcess = null;
+          reject(err);
+        });
+
+        proc.on('exit', (code) => {
+          hostFfmpegProcess = null;
+          if (code === 0 && fs.existsSync(remuxedPath)) {
+            console.log('[Host Stream] MP4 remux complete! Output size:', fs.statSync(remuxedPath).size);
+            resolve();
+          } else {
+            console.warn('[Host Stream] Remux exited with code', code, ', falling back to original file');
+            resolve();
+          }
+        });
+      });
+
+      if (fs.existsSync(remuxedPath) && fs.statSync(remuxedPath).size > 1024) {
+        activeServePath = remuxedPath;
+      }
     }
   }
 
-  let contentType = 'video/mp4';
-  if (ext === '.webm') contentType = 'video/webm';
-  else if (ext === '.mkv') contentType = 'video/x-matroska';
-  else if (ext === '.mov') contentType = 'video/quicktime';
-  else if (ext === '.avi') contentType = 'video/x-msvideo';
+  const serveStat = fs.statSync(activeServePath);
+  const serveFileSize = serveStat.size;
+  const contentType = 'video/mp4';
 
   return new Promise((resolve, reject) => {
     event.sender.send('host-tunnel-status', { step: 'starting-server', message: 'Starting local video streaming server...' });
@@ -561,61 +578,9 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
 
       if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ status: 'ok', file: fileName, size: fileSize, hls: useHls }));
+        return res.end(JSON.stringify({ status: 'ok', file: fileName, size: serveFileSize }));
       }
 
-      // HLS Streaming Mode
-      if (useHls) {
-        if (req.url === '/index.m3u8' || req.url === '/video') {
-          if (!fs.existsSync(playlistPath)) {
-            res.writeHead(404);
-            return res.end('Playlist not ready');
-          }
-          res.writeHead(200, {
-            'Content-Type': 'application/vnd.apple.mpegurl',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-          });
-          const stream = fs.createReadStream(playlistPath);
-          res.on('close', () => stream.destroy());
-          return stream.pipe(res);
-        }
-
-        if (req.url.endsWith('.ts')) {
-          const segName = path.basename(req.url);
-          const segPath = path.join(hostHlsDir, segName);
-
-          const sendSeg = () => {
-            if (!fs.existsSync(segPath)) {
-              res.writeHead(404);
-              return res.end('Segment not found');
-            }
-            const segStat = fs.statSync(segPath);
-            res.writeHead(200, {
-              'Content-Type': 'video/MP2T',
-              'Content-Length': segStat.size,
-              'Cache-Control': 'public, max-age=86400',
-            });
-            const stream = fs.createReadStream(segPath);
-            res.on('close', () => stream.destroy());
-            stream.pipe(res);
-          };
-
-          if (!fs.existsSync(segPath)) {
-            const waitPoll = Date.now();
-            const interval = setInterval(() => {
-              if (fs.existsSync(segPath) || Date.now() - waitPoll > 3000) {
-                clearInterval(interval);
-                sendSeg();
-              }
-            }, 100);
-            return;
-          } else {
-            return sendSeg();
-          }
-        }
-      }
-
-      // Direct Progressive MP4 streaming mode with range requests
       const range = req.headers.range;
       const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB chunks optimal for Cloudflare Tunnel
 
@@ -624,10 +589,10 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
           const parts = range.replace(/bytes=/, '').split('-');
           const start = parseInt(parts[0], 10);
           let end = parts[1] ? parseInt(parts[1], 10) : start + CHUNK_SIZE - 1;
-          if (end >= fileSize) end = fileSize - 1;
+          if (end >= serveFileSize) end = serveFileSize - 1;
           const chunksize = end - start + 1;
           res.writeHead(206, {
-            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+            'Content-Range': `bytes ${start}-${end}/${serveFileSize}`,
             'Accept-Ranges': 'bytes',
             'Content-Length': chunksize,
             'Content-Type': contentType,
@@ -635,7 +600,7 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
           });
         } else {
           res.writeHead(200, {
-            'Content-Length': fileSize,
+            'Content-Length': serveFileSize,
             'Accept-Ranges': 'bytes',
             'Content-Type': contentType,
             'Cache-Control': 'public, max-age=3600',
@@ -649,33 +614,33 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
         const start = parseInt(parts[0], 10);
         let end = parts[1] ? parseInt(parts[1], 10) : start + CHUNK_SIZE - 1;
         if (end - start + 1 > CHUNK_SIZE) end = start + CHUNK_SIZE - 1;
-        if (end >= fileSize) end = fileSize - 1;
+        if (end >= serveFileSize) end = serveFileSize - 1;
 
-        if (start >= fileSize) {
-          res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+        if (start >= serveFileSize) {
+          res.writeHead(416, { 'Content-Range': `bytes */${serveFileSize}` });
           return res.end();
         }
 
         const chunksize = end - start + 1;
         res.writeHead(206, {
-          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Content-Range': `bytes ${start}-${end}/${serveFileSize}`,
           'Accept-Ranges': 'bytes',
           'Content-Length': chunksize,
           'Content-Type': contentType,
           'Cache-Control': 'public, max-age=3600',
         });
 
-        const stream = fs.createReadStream(filePath, { start, end });
+        const stream = fs.createReadStream(activeServePath, { start, end });
         res.on('close', () => stream.destroy());
         stream.pipe(res);
       } else {
         res.writeHead(200, {
-          'Content-Length': fileSize,
+          'Content-Length': serveFileSize,
           'Accept-Ranges': 'bytes',
           'Content-Type': contentType,
           'Cache-Control': 'public, max-age=3600',
         });
-        const stream = fs.createReadStream(filePath);
+        const stream = fs.createReadStream(activeServePath);
         res.on('close', () => stream.destroy());
         stream.pipe(res);
       }
@@ -683,7 +648,7 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
 
     hostVideoServer.listen(0, '127.0.0.1', () => {
       const port = hostVideoServer.address().port;
-      console.log(`[Host Server] Video stream ready on local port ${port} (mode: ${useHls ? 'HLS' : 'Direct'})`);
+      console.log(`[Host Server] Video stream ready on local port ${port}`);
 
       event.sender.send('host-tunnel-status', { step: 'creating-tunnel', message: 'Creating secure Cloudflare tunnel...' });
 
@@ -692,8 +657,8 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
 
         hostCloudflareTunnel.once('url', (tunnelUrl) => {
           console.log(`[Host Tunnel] Cloudflare Tunnel established: ${tunnelUrl}`);
-          const streamUrl = useHls ? `${tunnelUrl}/index.m3u8` : `${tunnelUrl}/video`;
-          const localStreamUrl = useHls ? `http://127.0.0.1:${port}/index.m3u8` : `http://127.0.0.1:${port}/video`;
+          const streamUrl = `${tunnelUrl}/video`;
+          const localStreamUrl = `http://127.0.0.1:${port}/video`;
 
           event.sender.send('host-tunnel-status', {
             step: 'ready',
@@ -706,8 +671,7 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
             localStreamUrl,
             tunnelUrl,
             fileName,
-            fileSize,
-            isHls: useHls,
+            fileSize: serveFileSize,
           });
         });
 
@@ -741,7 +705,7 @@ ipcMain.handle('stop-host-tunnel', () => {
     console.log('[Host Tunnel] Grace period expired. Stopping host stream.');
     cleanupHostTunnel();
     hostStopGraceTimer = null;
-  }, 2500);
+  }, 10000);
   return true;
 });
 

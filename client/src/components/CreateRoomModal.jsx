@@ -27,6 +27,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
 
   const [loading, setLoading] = useState(false);
   const [tunnelStatusText, setTunnelStatusText] = useState("");
+  const [tunnelProgress, setTunnelProgress] = useState(0);
   const [error, setError] = useState("");
 
   // Handle ESC key
@@ -119,9 +120,11 @@ export default function CreateRoomModal({ isOpen, onClose }) {
       if (inputType === "tunnel") {
         if (isElectron && selectedFile?.filePath) {
           setTunnelStatusText("Starting local video streaming server...");
+          setTunnelProgress(0);
           
           const unsubscribe = window.electronAPI.onTunnelStatus?.((status) => {
             if (status.message) setTunnelStatusText(status.message);
+            if (typeof status.progress === 'number') setTunnelProgress(status.progress);
           });
 
           try {
@@ -497,11 +500,23 @@ export default function CreateRoomModal({ isOpen, onClose }) {
           </div>
 
           <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: "0.8125rem", color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ fontSize: "0.8125rem", color: "var(--text-2)", display: "flex", flexDirection: "column", gap: 4, flex: 1, marginRight: "var(--sp-4)" }}>
               {loading && tunnelStatusText && (
                 <>
-                  <Loader2 className="spinner" size={14} color="var(--primary)" />
-                  <span>{tunnelStatusText}</span>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <Loader2 className="spinner" size={14} color="var(--primary)" />
+                      <span style={{ fontWeight: 500, color: "var(--text-1)" }}>{tunnelStatusText}</span>
+                    </div>
+                    {tunnelProgress > 0 && (
+                      <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--primary)" }}>{tunnelProgress}%</span>
+                    )}
+                  </div>
+                  {tunnelProgress > 0 && (
+                    <div style={{ width: "100%", height: 3, background: "var(--border)", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ width: `${tunnelProgress}%`, height: "100%", background: "var(--primary)", transition: "width 0.2s ease" }} />
+                    </div>
+                  )}
                 </>
               )}
             </div>
