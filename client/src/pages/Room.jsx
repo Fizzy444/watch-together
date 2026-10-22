@@ -238,7 +238,7 @@ export default function Room() {
   }
 
   async function copyRoomLink() {
-    const serverUrl = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "") : "";
+    const serverUrl = (import.meta.env.VITE_SERVER_URL || "https://watch-together-hl8e.onrender.com").replace(/\/+$/, "");
     const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:";
     const baseUrl = (isLocal && serverUrl) ? serverUrl : window.location.origin;
     const url = `${baseUrl}/watch/${roomId}`;
@@ -369,7 +369,7 @@ export default function Room() {
   }
 
   // Direct progressive streaming endpoint
-  const serverUrl = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "") : "";
+  const serverUrl = (import.meta.env.VITE_SERVER_URL || "https://watch-together-hl8e.onrender.com").replace(/\/+$/, "");
   const videoSrc = isTunnel ? ((isHost && window.__hostLocalStreamUrl) ? window.__hostLocalStreamUrl : room.movie) : (streamReady ? `${serverUrl}/api/rooms/${roomId}/video` : null);
 
   return (

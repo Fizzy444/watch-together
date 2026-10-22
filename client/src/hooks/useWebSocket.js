@@ -40,7 +40,7 @@ export function useWebSocket(roomId, userName, onMessage) {
     clearTimeout(reconnectTimer.current);
 
     // Support remote Koyeb / cloud server or local dev server
-    const serverUrl = import.meta.env.VITE_SERVER_URL;
+    const serverUrl = import.meta.env.VITE_SERVER_URL || (typeof window !== "undefined" && window.location.protocol === "file:" ? "https://watch-together-hl8e.onrender.com" : null);
     let wsHost = window.location.host;
     let protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 
