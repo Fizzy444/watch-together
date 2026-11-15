@@ -22,4 +22,20 @@ export function getServerUrl() {
   return "";
 }
 
+let isWarmingUp = false;
+
+export function warmupServer() {
+  if (isWarmingUp) return;
+  const url = getServerUrl();
+  if (!url) return;
+  isWarmingUp = true;
+  fetch(`${url}/health`, { method: "GET" })
+    .catch(() => {})
+    .finally(() => {
+      setTimeout(() => {
+        isWarmingUp = false;
+      }, 30000);
+    });
+}
+
 export default getServerUrl;

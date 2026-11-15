@@ -347,17 +347,38 @@ p {
   transition: width 0.2s ease-out;
 }
 
+.spin {
+  animation: spin 0.75s linear infinite;
+  display: inline-block;
+}
+
 .spinner {
   width: 16px;
   height: 16px;
   border: 2px solid var(--border-hover);
   border-top-color: var(--primary);
   border-radius: 50%;
-  animation: spin 0.65s linear infinite;
+  animation: spin 0.75s linear infinite;
   display: inline-block;
 }
+
+svg.spinner,
+svg.spin {
+  border: none;
+  border-radius: 0;
+  width: auto;
+  height: auto;
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .spin {
+    animation: none;
+  }
 }
 
 /* ── Upload Zone ──────────────────────────────────────────── */

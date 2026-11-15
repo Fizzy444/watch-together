@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { User, Lock, Eye, EyeOff, Loader2, AlertCircle, LogIn, UserPlus, X } from 'lucide-react';
 import { loginApi, signupApi } from '../utils/auth.js';
+import { warmupServer } from '../utils/serverUrl.js';
 
 export default function AuthModal({
   isOpen,
   onClose,
-  initialMode = 'signin', // 'signin' | 'signup'
+  initialMode = 'signin',
   onSuccess,
+  onAuthSuccess,
 }) {
   const [mode, setMode] = useState(initialMode);
   const [username, setUsername] = useState('');
@@ -14,16 +16,31 @@ export default function AuthModal({
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [hasSlowNotice, setHasSlowNotice] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
+      warmupServer();
       setMode(initialMode || 'signin');
       setUsername('');
       setPassword('');
       setError('');
       setShowPassword(false);
+      setHasSlowNotice(false);
     }
   }, [isOpen, initialMode]);
+
+  useEffect(() => {
+    let timer;
+    if (loading) {
+      timer = setTimeout(() => {
+        setHasSlowNotice(true);
+      }, 2500);
+    } else {
+      setHasSlowNotice(false);
+    }
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -67,8 +84,10 @@ export default function AuthModal({
       } else {
         result = await loginApi(cleanUser, password);
       }
-      onSuccess?.(result.user);
+      const user = result.user;
       onClose?.();
+      const successHandler = onSuccess || onAuthSuccess;
+      successHandler?.(user);
     } catch (err) {
       setError(err.message || 'Authentication failed. Please try again.');
     } finally {
@@ -296,8 +315,28 @@ export default function AuthModal({
 
             {mode === 'signup' && (
               <p style={{ fontSize: '0.75rem', color: 'var(--text-3)', margin: 0, lineHeight: 1.4 }}>
-                💡 Tip: There are no email resets or verification codes. Pick a username and password you will remember.
+                Tip: There are no email resets or verification codes. Pick a username and password you will remember.
               </p>
+            )}
+
+            {hasSlowNotice && loading && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 'var(--sp-2)',
+                  padding: 'var(--sp-2) var(--sp-3)',
+                  background: 'rgba(99, 102, 241, 0.08)',
+                  border: '1px solid rgba(99, 102, 241, 0.25)',
+                  borderRadius: 'var(--r-sm)',
+                  color: 'var(--text-2)',
+                  fontSize: '0.75rem',
+                  lineHeight: 1.4,
+                }}
+              >
+                <Loader2 size={13} className="spin" style={{ flexShrink: 0, color: 'var(--primary)' }} />
+                <span>Connecting to cloud server... (cold start may take a few moments)</span>
+              </div>
             )}
           </div>
 

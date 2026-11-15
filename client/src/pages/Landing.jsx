@@ -44,6 +44,7 @@ export default function Landing() {
   }
 
   function handleAuthSuccess(user) {
+    setAuthModalOpen(false);
     setCurrentUser(user);
     navigate('/dashboard');
   }

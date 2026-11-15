@@ -75,6 +75,7 @@ export default function Home() {
   }, []);
 
   function handleAuthSuccess(user) {
+    setAuthModalOpen(false);
     setCurrentUser(user);
     if (user?.username) {
       setProfileName(user.username);
@@ -484,6 +485,7 @@ export default function Home() {
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
         initialMode={authModalMode}
+        onSuccess={handleAuthSuccess}
         onAuthSuccess={handleAuthSuccess}
       />
     </div>
