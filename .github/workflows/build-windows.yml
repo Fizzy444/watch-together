@@ -8,16 +8,6 @@ on:
         type: boolean
         required: false
         default: true
-  push:
-    branches:
-      - main
-      - feature/rust-desktop-app
-    paths:
-      - 'src-tauri/**'
-      - 'client/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/build-windows.yml'
   pull_request:
     branches:
       - main
