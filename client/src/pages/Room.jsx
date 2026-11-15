@@ -598,6 +598,7 @@ export default function Room() {
             <VideoPlayer
               ref={videoPlayerRef}
               src={videoSrc}
+              subtitleUrl={window.__hostSubtitleUrl || room?.subtitleUrl || null}
               streamObject={isP2P && !isHost ? remoteStream : null}
               isP2P={isP2P}
               isTorrent={isTorrent}

@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::CorsLayer;
-use tower_http::services::ServeFile;
+use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +32,9 @@ pub struct TunnelResult {
     pub file_size: u64,
     pub duration: f64,
     pub is_hls: bool,
+    pub stream_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtitle_url: Option<String>,
 }
 
 #[derive(Default)]
@@ -41,6 +44,8 @@ pub struct ActiveTunnelState {
     pub ffmpeg_child: Option<tokio::process::Child>,
     pub current_video_path: Option<String>,
     pub current_temp_remux: Option<PathBuf>,
+    pub hls_dir: Option<PathBuf>,
+    pub stream_mode: Option<String>,
 }
 
 pub type SharedTunnelState = Arc<Mutex<ActiveTunnelState>>;
@@ -64,19 +69,10 @@ struct FfprobeOutput {
 
 struct ProbeResult {
     duration: f64,
-    needs_audio_transcode: bool,
-    is_mkv: bool,
     needs_video_transcode: bool,
 }
 
 async fn probe_video_file(file_path: &str) -> ProbeResult {
-    let ext = Path::new(file_path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    let is_mkv = ext == "mkv";
-
     let output = Command::new("ffprobe")
         .args([
             "-v",
@@ -95,8 +91,6 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
         _ => {
             return ProbeResult {
                 duration: 0.0,
-                needs_audio_transcode: false,
-                is_mkv,
                 needs_video_transcode: false,
             };
         }
@@ -107,8 +101,6 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
         Err(_) => {
             return ProbeResult {
                 duration: 0.0,
-                needs_audio_transcode: false,
-                is_mkv,
                 needs_video_transcode: false,
             };
         }
@@ -121,26 +113,14 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
         .unwrap_or(0.0);
 
     let streams = parsed.streams.unwrap_or_default();
-    let audio_streams: Vec<_> = streams
-        .iter()
-        .filter(|s| s.codec_type.as_deref() == Some("audio"))
-        .collect();
     let video_streams: Vec<_> = streams
         .iter()
         .filter(|s| s.codec_type.as_deref() == Some("video"))
         .collect();
 
-    let supported_audio: HashSet<&str> = ["aac", "mp3", "opus", "vorbis", "flac"]
-        .into_iter()
-        .collect();
     let supported_video: HashSet<&str> = ["h264", "avc1", "vp9", "av1"]
         .into_iter()
         .collect();
-
-    let needs_audio_transcode = audio_streams.iter().any(|s| {
-        let codec = s.codec_name.as_deref().unwrap_or("").to_lowercase();
-        !supported_audio.contains(codec.as_str())
-    });
 
     let needs_video_transcode = video_streams.first().map_or(false, |s| {
         let codec = s.codec_name.as_deref().unwrap_or("").to_lowercase();
@@ -149,8 +129,6 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
 
     ProbeResult {
         duration,
-        needs_audio_transcode,
-        is_mkv,
         needs_video_transcode,
     }
 }
@@ -174,16 +152,6 @@ fn resolve_cloudflared_binary() -> PathBuf {
     }
 
     PathBuf::from(if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" })
-}
-
-fn compute_file_hash(path: &Path, size: u64, mtime_ms: u128) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    path.to_string_lossy().hash(&mut hasher);
-    size.hash(&mut hasher);
-    mtime_ms.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
 }
 
 #[tauri::command]
@@ -229,6 +197,10 @@ pub async fn cleanup_tunnel(state: &SharedTunnelState) {
         let _ = fs::remove_file(temp_path);
     }
 
+    if let Some(hls_dir) = guard.hls_dir.take() {
+        let _ = fs::remove_dir_all(hls_dir);
+    }
+
     if let Some(mut child) = guard.cloudflared_child.take() {
         let _ = child.kill().await;
     }
@@ -238,6 +210,7 @@ pub async fn cleanup_tunnel(state: &SharedTunnelState) {
     }
 
     guard.current_video_path = None;
+    guard.stream_mode = None;
 }
 
 #[tauri::command]
@@ -248,11 +221,114 @@ pub async fn stop_host_tunnel(
     Ok(true)
 }
 
+fn spawn_hls_ffmpeg(
+    video_path: &str,
+    hls_dir: &Path,
+    start_seconds: f64,
+    needs_video_transcode: bool,
+) -> Result<tokio::process::Child, String> {
+    let playlist_path = hls_dir.join("stream.m3u8");
+    let segment_pattern = hls_dir.join("seg_%03d.ts").to_string_lossy().to_string();
+
+    let mut args = vec![
+        "-y".to_string(),
+        "-ss".to_string(),
+        format!("{:.3}", start_seconds),
+        "-i".to_string(),
+        video_path.to_string(),
+        "-map".to_string(),
+        "0:v:0".to_string(),
+        "-map".to_string(),
+        "0:a:0?".to_string(),
+    ];
+
+    if needs_video_transcode {
+        args.extend([
+            "-c:v".to_string(),
+            "libx264".to_string(),
+            "-preset".to_string(),
+            "ultrafast".to_string(),
+            "-crf".to_string(),
+            "22".to_string(),
+        ]);
+    } else {
+        args.extend(["-c:v".to_string(), "copy".to_string()]);
+    }
+
+    args.extend([
+        "-c:a".to_string(),
+        "aac".to_string(),
+        "-b:a".to_string(),
+        "192k".to_string(),
+        "-ac".to_string(),
+        "2".to_string(),
+        "-f".to_string(),
+        "hls".to_string(),
+        "-hls_time".to_string(),
+        "4".to_string(),
+        "-hls_list_size".to_string(),
+        "0".to_string(),
+        "-hls_segment_filename".to_string(),
+        segment_pattern,
+        playlist_path.to_string_lossy().to_string(),
+    ]);
+
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(&args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    cmd.spawn().map_err(|e| format!("Failed to spawn ffmpeg for HLS: {e}"))
+}
+
+#[tauri::command]
+pub async fn seek_hls_stream(
+    state: tauri::State<'_, SharedTunnelState>,
+    target_seconds: f64,
+) -> Result<bool, String> {
+    let mut guard = state.lock().await;
+    let video_path = match &guard.current_video_path {
+        Some(p) => p.clone(),
+        None => return Err("No active video stream to seek".to_string()),
+    };
+    let hls_dir = match &guard.hls_dir {
+        Some(d) => d.clone(),
+        None => return Err("Active stream is not in HLS mode".to_string()),
+    };
+
+    if let Some(mut child) = guard.ffmpeg_child.take() {
+        let _ = child.kill().await;
+    }
+
+    if let Ok(entries) = fs::read_dir(&hls_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().map_or(false, |ext| ext == "ts" || ext == "m3u8") {
+                let _ = fs::remove_file(p);
+            }
+        }
+    }
+
+    let child = spawn_hls_ffmpeg(&video_path, &hls_dir, target_seconds, false)?;
+    guard.ffmpeg_child = Some(child);
+
+    let playlist_path = hls_dir.join("stream.m3u8");
+    for _ in 0..40 {
+        if playlist_path.exists() {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn start_host_tunnel(
     app: AppHandle,
     state: tauri::State<'_, SharedTunnelState>,
     file_path: String,
+    stream_mode: Option<String>,
 ) -> Result<TunnelResult, String> {
     cleanup_tunnel(&state).await;
 
@@ -284,120 +360,72 @@ pub async fn start_host_tunnel(
 
     let probe = probe_video_file(&file_path).await;
     let duration = probe.duration;
-    let needs_transmux = probe.needs_audio_transcode || probe.is_mkv || ext != "mp4" || probe.needs_video_transcode;
 
-    let cache_dir = std::env::temp_dir().join("wt-cache");
-    let _ = fs::create_dir_all(&cache_dir);
-
-    let mtime_ms = metadata
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-
-    let file_hash = compute_file_hash(&path, file_size, mtime_ms);
-    let cached_mp4_path = cache_dir.join(format!("{file_hash}.mp4"));
-    let cached_mp4_tmp = cache_dir.join(format!("{file_hash}.tmp.mp4"));
-
-    let mut target_file_path = path.clone();
-    let mut target_file_size = file_size;
-
-    if needs_transmux {
-        if cached_mp4_path.exists() {
-            target_file_size = fs::metadata(&cached_mp4_path).map(|m| m.len()).unwrap_or(file_size);
-            target_file_path = cached_mp4_path;
+    let selected_mode = stream_mode.unwrap_or_else(|| {
+        if ext == "mkv" {
+            "hls".to_string()
         } else {
-            let _ = app.emit(
-                "host-tunnel-status",
-                serde_json::json!({
-                    "step": "transcoding",
-                    "message": "Optimizing video for streaming (0%)...",
-                    "progress": 0
-                }),
-            );
-
-            {
-                let mut guard = state.lock().await;
-                guard.current_temp_remux = Some(cached_mp4_tmp.clone());
-            }
-
-            let mut ffmpeg_args = vec![
-                "-y".to_string(),
-                "-i".to_string(),
-                file_path.clone(),
-                "-map".to_string(),
-                "0:v:0".to_string(),
-                "-map".to_string(),
-                "0:a:0?".to_string(),
-            ];
-
-            if probe.needs_video_transcode {
-                ffmpeg_args.extend([
-                    "-c:v".to_string(),
-                    "libx264".to_string(),
-                    "-preset".to_string(),
-                    "ultrafast".to_string(),
-                    "-crf".to_string(),
-                    "22".to_string(),
-                ]);
-            } else {
-                ffmpeg_args.extend(["-c:v".to_string(), "copy".to_string()]);
-            }
-
-            ffmpeg_args.extend([
-                "-c:a".to_string(),
-                "aac".to_string(),
-                "-b:a".to_string(),
-                "192k".to_string(),
-                "-ac".to_string(),
-                "2".to_string(),
-                "-movflags".to_string(),
-                "+faststart".to_string(),
-                cached_mp4_tmp.to_string_lossy().to_string(),
-            ]);
-
-            let mut cmd = Command::new("ffmpeg");
-            cmd.args(&ffmpeg_args)
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped());
-
-            let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn ffmpeg: {e}"))?;
-            let stderr = child.stderr.take().ok_or("Failed to open ffmpeg stderr")?;
-
-            let app_clone = app.clone();
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr).lines();
-                let time_re = Regex::new(r"time=(\d{2}):(\d{2}):(\d{2}\.\d+)").unwrap();
-
-                while let Ok(Some(line)) = reader.next_line().await {
-                    if let Some(caps) = time_re.captures(&line) {
-                        if duration > 0.0 {
-                            let h: f64 = caps[1].parse().unwrap_or(0.0);
-                            let m: f64 = caps[2].parse().unwrap_or(0.0);
-                            let s: f64 = caps[3].parse().unwrap_or(0.0);
-                            let cur_sec = h * 3600.0 + m * 60.0 + s;
-                            let percent = (cur_sec / duration * 100.0).round().clamp(0.0, 99.0) as u32;
-                            let _ = app_clone.emit(
-                                "host-tunnel-status",
-                                serde_json::json!({
-                                    "step": "transcoding",
-                                    "message": format!("Optimizing video for streaming ({percent}%)..."),
-                                    "progress": percent
-                                }),
-                            );
-                        }
-                    }
-                }
-            });
-
-            let status = child.wait().await.map_err(|e| e.to_string())?;
-            if status.success() && cached_mp4_tmp.exists() {
-                let _ = fs::rename(&cached_mp4_tmp, &cached_mp4_path);
-                target_file_size = fs::metadata(&cached_mp4_path).map(|m| m.len()).unwrap_or(file_size);
-                target_file_path = cached_mp4_path;
-            }
+            "direct".to_string()
         }
+    });
+
+    let mut subtitle_url: Option<String> = None;
+    let mut is_hls = false;
+    let mut active_hls_dir: Option<PathBuf> = None;
+
+    if selected_mode == "hls" {
+        is_hls = true;
+        let _ = app.emit(
+            "host-tunnel-status",
+            serde_json::json!({
+                "step": "starting-hls",
+                "message": "Initializing Just-In-Time HLS engine (4s chunks)..."
+            }),
+        );
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        let hls_dir = std::env::temp_dir().join(format!("wt-hls-{timestamp}"));
+        let _ = fs::create_dir_all(&hls_dir);
+
+        let vtt_path = hls_dir.join("subtitles.vtt");
+        let _ = Command::new("ffmpeg")
+            .args([
+                "-v", "error",
+                "-y",
+                "-i", &file_path,
+                "-map", "0:s:0?",
+                "-f", "webvtt",
+                &vtt_path.to_string_lossy(),
+            ])
+            .output()
+            .await;
+
+        let child = spawn_hls_ffmpeg(&file_path, &hls_dir, 0.0, probe.needs_video_transcode)?;
+
+        {
+            let mut guard = state.lock().await;
+            guard.ffmpeg_child = Some(child);
+            guard.hls_dir = Some(hls_dir.clone());
+            guard.current_video_path = Some(file_path.clone());
+            guard.stream_mode = Some("hls".to_string());
+        }
+
+        let playlist_path = hls_dir.join("stream.m3u8");
+        for _ in 0..50 {
+            if playlist_path.exists() {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        active_hls_dir = Some(hls_dir);
+    } else {
+        let mut guard = state.lock().await;
+        guard.current_video_path = Some(file_path.clone());
+        guard.stream_mode = Some(selected_mode.clone());
     }
 
     let _ = app.emit(
@@ -414,41 +442,36 @@ pub async fn start_host_tunnel(
     let local_port = listener.local_addr().map_err(|e| e.to_string())?.port();
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let service = ServeFile::new(target_file_path.clone());
+    let video_service = ServeFile::new(path.clone());
 
-    let server_app = axum::Router::new()
+    let mut router = axum::Router::new()
         .route(
             "/health",
-            axum::routing::get({
-                let f_name = file_name.clone();
-                move || async move {
-                    axum::Json(serde_json::json!({
-                        "status": "ok",
-                        "file": f_name,
-                        "size": target_file_size,
-                        "duration": duration,
-                        "isHls": false
-                    }))
-                }
-            }),
+            axum::routing::get(|| async { axum::Json(serde_json::json!({ "status": "ok" })) }),
         )
         .route(
             "/info",
             axum::routing::get({
                 let f_name = file_name.clone();
+                let m_name = selected_mode.clone();
                 move || async move {
                     axum::Json(serde_json::json!({
                         "status": "ok",
                         "file": f_name,
-                        "size": target_file_size,
+                        "size": file_size,
                         "duration": duration,
-                        "isHls": false
+                        "mode": m_name,
                     }))
                 }
             }),
         )
-        .nest_service("/video", service)
-        .layer(CorsLayer::permissive());
+        .nest_service("/video", video_service);
+
+    if let Some(ref h_dir) = active_hls_dir {
+        router = router.nest_service("/hls", ServeDir::new(h_dir));
+    }
+
+    let server_app = router.layer(CorsLayer::permissive());
 
     tokio::spawn(async move {
         let _ = axum::serve(listener, server_app)
@@ -462,7 +485,7 @@ pub async fn start_host_tunnel(
         "host-tunnel-status",
         serde_json::json!({
             "step": "creating-tunnel",
-            "message": "Creating secure Cloudflare tunnel..."
+            "message": "Connecting Cloudflare Quick Tunnel..."
         }),
     );
 
@@ -515,8 +538,22 @@ pub async fn start_host_tunnel(
         .map_err(|_| "Timeout waiting for Cloudflare tunnel URL".to_string())?
         .map_err(|_| "Failed to obtain Cloudflare tunnel URL".to_string())?;
 
-    let stream_url = format!("{tunnel_base_url}/video");
-    let local_stream_url = format!("http://127.0.0.1:{local_port}/video");
+    let (stream_url, local_stream_url) = if is_hls {
+        let s_url = format!("{tunnel_base_url}/hls/stream.m3u8");
+        let l_url = format!("http://127.0.0.1:{local_port}/hls/stream.m3u8");
+        if let Some(ref h_dir) = active_hls_dir {
+            let vtt = h_dir.join("subtitles.vtt");
+            if vtt.exists() && fs::metadata(&vtt).map(|m| m.len() > 10).unwrap_or(false) {
+                subtitle_url = Some(format!("{tunnel_base_url}/hls/subtitles.vtt"));
+            }
+        }
+        (s_url, l_url)
+    } else {
+        (
+            format!("{tunnel_base_url}/video"),
+            format!("http://127.0.0.1:{local_port}/video"),
+        )
+    };
 
     let _ = app.emit(
         "host-tunnel-status",
@@ -531,7 +568,6 @@ pub async fn start_host_tunnel(
         let mut guard = state.lock().await;
         guard.server_shutdown = Some(shutdown_tx);
         guard.cloudflared_child = Some(cf_child);
-        guard.current_video_path = Some(file_path);
     }
 
     Ok(TunnelResult {
@@ -539,8 +575,10 @@ pub async fn start_host_tunnel(
         local_stream_url,
         tunnel_url: tunnel_base_url,
         file_name,
-        file_size: target_file_size,
+        file_size,
         duration,
-        is_hls: false,
+        is_hls,
+        stream_mode: selected_mode,
+        subtitle_url,
     })
 }

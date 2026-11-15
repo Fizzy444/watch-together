@@ -19,8 +19,8 @@ import {
 import { createVttBlobUrl, getFriendlySubtitleLabel } from '../utils/subtitles.js';
 
 // Sync thresholds (seconds)
-const HARD_SEEK_THRESHOLD = 8.0;   // Only hard-seek if drift is > 8 seconds
-const CATCHUP_THRESHOLD = 0.5;     // Smoothly speed up/down if drift is > 0.5s
+const HARD_SEEK_THRESHOLD = 1.5;   // Hard-seek if drift exceeds 1.5s
+const CATCHUP_THRESHOLD = 0.3;     // Smoothly nudge speed if drift is > 0.3s
 
 function formatTime(s) {
   if (!isFinite(s) || isNaN(s)) return '0:00';
@@ -34,6 +34,7 @@ function formatTime(s) {
 const VideoPlayer = forwardRef(function VideoPlayer({
   src,
   videoPath = null,
+  subtitleUrl = null,
   knownDuration = null,
   isLivePipe = null,
   streamObject = null,
@@ -437,7 +438,12 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     const isHls = src.includes('.m3u8');
 
     if (isHls && Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+      });
       hlsRef.current = hls;
       hls.loadSource(src);
       hls.attachMedia(video);
@@ -460,6 +466,9 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           }
         }
       });
+    } else if (isHls && video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = src;
+      video.load();
     } else {
       const streamUrlWithSession = isLivePipeStream && !src.includes('sessionId=')
         ? `${src}${src.includes('?') ? '&' : '?'}sessionId=${sessionIdRef.current}`
@@ -566,6 +575,40 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       console.warn("[VideoPlayer] Error finding matching subtitles:", err);
     });
   }, [videoPath, src]);
+
+  // Auto-detect extracted HLS/room subtitles from subtitleUrl, window, or HLS stream URL
+  useEffect(() => {
+    const subUrl = subtitleUrl
+      || (typeof window !== 'undefined' ? window.__hostSubtitleUrl : null)
+      || (isHlsSource && src ? `${src.replace(/\/stream\.m3u8.*$/, '')}/subtitles.vtt` : null);
+
+    if (!subUrl) return;
+
+    fetch(subUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((vttContent) => {
+        if (!vttContent || !vttContent.trim().startsWith('WEBVTT')) return;
+        const blobUrl = createVttBlobUrl(vttContent, 'vtt');
+        subtitleBlobUrlsRef.current.add(blobUrl);
+        const subTrack = {
+          id: 'external-hls-sub',
+          label: 'Extracted Subtitles (VTT)',
+          fileName: 'subtitles.vtt',
+          format: 'vtt',
+          content: vttContent,
+          blobUrl,
+          isAutoDetected: true,
+        };
+        setExternalSubtitles((prev) => {
+          if (prev.some((t) => t.id === 'external-hls-sub')) return prev;
+          return [subTrack, ...prev];
+        });
+      })
+      .catch(() => {});
+  }, [subtitleUrl, isHlsSource, src]);
 
   // Activate chosen subtitle
   const handleSelectSubtitle = useCallback((trackId) => {
@@ -972,7 +1015,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           }
           video.playbackRate = 1.0;
         } else if (drift > CATCHUP_THRESHOLD) {
-          video.playbackRate = 1.08;
+          video.playbackRate = 1.05;
         } else if (drift < -CATCHUP_THRESHOLD) {
           video.playbackRate = 0.95;
         } else {
@@ -1039,6 +1082,9 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       if (isLivePipeStream) {
         reloadLiveStreamAt(target, !video.paused);
       } else {
+        if (isHlsSource && (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)) {
+          (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)(target).catch(() => {});
+        }
         video.currentTime = target;
         setCurrentTime(target);
       }
@@ -1049,7 +1095,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         text: `${seconds > 0 ? '+' : ''}${seconds}s`,
       });
     },
-    [duration, onSeek, showHud, isLivePipeStream, reloadLiveStreamAt]
+    [effectiveDuration, onSeek, showHud, isLivePipeStream, reloadLiveStreamAt, isHlsSource]
   );
 
   // Absolute seek from range slider
@@ -1061,12 +1107,15 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       if (isLivePipeStream) {
         reloadLiveStreamAt(targetTime, !video.paused);
       } else {
+        if (isHlsSource && (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)) {
+          (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)(targetTime).catch(() => {});
+        }
         video.currentTime = targetTime;
         setCurrentTime(targetTime);
       }
       onSeek?.(targetTime);
     },
-    [onSeek, isLivePipeStream, reloadLiveStreamAt]
+    [onSeek, isLivePipeStream, reloadLiveStreamAt, isHlsSource]
   );
 
   const toggleMute = useCallback(() => {
