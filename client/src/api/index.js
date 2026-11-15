@@ -1,6 +1,6 @@
-const SERVER_URL = import.meta.env.VITE_SERVER_URL
-  ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "")
-  : "";
+import { getServerUrl } from "../utils/serverUrl.js";
+
+const SERVER_URL = getServerUrl();
 const BASE = `${SERVER_URL}/api`;
 
 export async function getMovies() {

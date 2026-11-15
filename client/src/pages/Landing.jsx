@@ -29,6 +29,13 @@ export default function Landing() {
   const [authModalMode, setAuthModalMode] = useState('signin');
   const [roomCodeInput, setRoomCodeInput] = useState('');
 
+  // Automatically redirect logged-in users directly to the dashboard
+  useEffect(() => {
+    if (currentUser) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [currentUser, navigate]);
+
   // Listen for auth changes across tabs/components
   useEffect(() => {
     const handleAuthChange = (e) => {
@@ -44,6 +51,7 @@ export default function Landing() {
   }
 
   function handleAuthSuccess(user) {
+    setAuthModalOpen(false);
     setCurrentUser(user);
     navigate('/dashboard');
   }
@@ -54,6 +62,10 @@ export default function Landing() {
     if (clean) {
       navigate(`/watch/${clean}`);
     }
+  }
+
+  if (currentUser) {
+    return null;
   }
 
   return (
@@ -69,7 +81,7 @@ export default function Landing() {
           background: 'rgba(15, 17, 23, 0.85)',
           backdropFilter: 'blur(12px)',
           position: 'sticky',
-          top: 0,
+          top: 'var(--titlebar-height, 0px)',
           zIndex: 40,
         }}
       >

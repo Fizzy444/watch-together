@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { X, Film, Upload, Zap, Loader2, Globe, Radio, ShieldCheck } from "lucide-react";
+import { X, Film, Upload, Zap, Loader2, Globe, Radio, ShieldCheck, Play, Layers } from "lucide-react";
 import { createRoom } from "../api/index.js";
 import { getSessionClientId } from "../hooks/useWebSocket.js";
 
@@ -16,8 +16,9 @@ function formatBytes(bytes, decimals = 1) {
 export default function CreateRoomModal({ isOpen, onClose }) {
   const navigate = useNavigate();
   const [roomName, setRoomName] = useState("");
-  const isElectron = Boolean(window.electronAPI);
+  const isElectron = Boolean(window.desktopAPI || window.electronAPI);
   const [inputType, setInputType] = useState("tunnel");
+  const [streamMode, setStreamMode] = useState("hls");
   
   const [selectedFile, setSelectedFile] = useState(null); // { name, size, filePath }
   const [tunnelUrlInput, setTunnelUrlInput] = useState("");
@@ -27,6 +28,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
 
   const [loading, setLoading] = useState(false);
   const [tunnelStatusText, setTunnelStatusText] = useState("");
+  const [tunnelProgress, setTunnelProgress] = useState(0);
   const [error, setError] = useState("");
 
   // Handle ESC key
@@ -119,17 +121,27 @@ export default function CreateRoomModal({ isOpen, onClose }) {
       if (inputType === "tunnel") {
         if (isElectron && selectedFile?.filePath) {
           setTunnelStatusText("Starting local video streaming server...");
+          setTunnelProgress(0);
           
           const unsubscribe = window.electronAPI.onTunnelStatus?.((status) => {
             if (status.message) setTunnelStatusText(status.message);
+            if (typeof status.progress === 'number') setTunnelProgress(status.progress);
           });
 
           try {
-            const tunnelRes = await window.electronAPI.startHostTunnel(selectedFile.filePath);
+            const tunnelRes = await window.electronAPI.startHostTunnel(selectedFile.filePath, streamMode);
             streamUrl = tunnelRes.streamUrl;
             if (tunnelRes.localStreamUrl) {
               window.__hostLocalStreamUrl = tunnelRes.localStreamUrl;
             }
+            if (tunnelRes.subtitleUrl) {
+              window.__hostSubtitleUrl = tunnelRes.subtitleUrl;
+            }
+            window.__hostFilePath = selectedFile.filePath;
+            window.__hostMovieDuration = tunnelRes.duration || 0;
+            window.__hostIsLivePipe = Boolean(tunnelRes.isLivePipe || streamMode === 'pipe');
+            window.__hostStreamMode = streamMode;
+            window.__hostIsHls = Boolean(tunnelRes.isHls);
             finalMovieName = (selectedFile?.name || selectedFile?.fileName || "").replace(/\.[^/.]+$/, "");
           } finally {
             unsubscribe?.();
@@ -145,6 +157,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
           movie: streamUrl,
           name: finalTitle,
           clientId,
+          duration: window.__hostMovieDuration || 0,
         });
 
         onClose();
@@ -297,7 +310,8 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                     />
 
                     {selectedFile ? (
-                      <div
+                      <>
+                        <div
                         style={{
                           padding: "var(--sp-4)",
                           background: "rgba(59, 130, 246, 0.08)",
@@ -338,6 +352,120 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                           Change
                         </button>
                       </div>
+
+                      {/* 4-Mode Streaming Engine Selector */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", marginTop: "var(--sp-1)" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <label style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--text-1)" }}>
+                            Streaming Engine Mode
+                          </label>
+                          <span style={{ fontSize: "0.6875rem", color: "var(--text-3)" }}>
+                            Select how video is sliced &amp; delivered
+                          </span>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${streamMode === 'hls' ? 'btn-primary' : 'btn-secondary'}`}
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "flex-start",
+                              padding: "10px",
+                              height: "auto",
+                              textAlign: "left",
+                              borderRadius: "var(--r-md)",
+                              border: streamMode === 'hls' ? "1px solid var(--primary)" : "1px solid var(--border)",
+                            }}
+                            onClick={() => setStreamMode('hls')}
+                            disabled={loading}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: "0.8125rem" }}>
+                              <Zap size={14} color={streamMode === 'hls' ? '#fff' : 'var(--primary)'} />
+                              JIT HLS (Recommended)
+                            </div>
+                            <span style={{ fontSize: "0.6875rem", color: streamMode === 'hls' ? "rgba(255,255,255,0.85)" : "var(--text-3)", marginTop: 3 }}>
+                              Instant start (&lt;1.5s), universal iPhone &amp; browser sync
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${streamMode === 'direct' ? 'btn-primary' : 'btn-secondary'}`}
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "flex-start",
+                              padding: "10px",
+                              height: "auto",
+                              textAlign: "left",
+                              borderRadius: "var(--r-md)",
+                              border: streamMode === 'direct' ? "1px solid var(--primary)" : "1px solid var(--border)",
+                            }}
+                            onClick={() => setStreamMode('direct')}
+                            disabled={loading}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: "0.8125rem" }}>
+                              <Play size={14} color={streamMode === 'direct' ? '#fff' : '#10b981'} />
+                              Direct Passthrough
+                            </div>
+                            <span style={{ fontSize: "0.6875rem", color: streamMode === 'direct' ? "rgba(255,255,255,0.85)" : "var(--text-3)", marginTop: 3 }}>
+                              0s wait, 0% CPU, raw MKV/MP4 byte stream
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${streamMode === 'pipe' ? 'btn-primary' : 'btn-secondary'}`}
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "flex-start",
+                              padding: "10px",
+                              height: "auto",
+                              textAlign: "left",
+                              borderRadius: "var(--r-md)",
+                              border: streamMode === 'pipe' ? "1px solid var(--primary)" : "1px solid var(--border)",
+                            }}
+                            onClick={() => setStreamMode('pipe')}
+                            disabled={loading}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: "0.8125rem" }}>
+                              <Radio size={14} color={streamMode === 'pipe' ? '#fff' : '#a855f7'} />
+                              Fragmented MP4 Pipe
+                            </div>
+                            <span style={{ fontSize: "0.6875rem", color: streamMode === 'pipe' ? "rgba(255,255,255,0.85)" : "var(--text-3)", marginTop: 3 }}>
+                              Continuous live MP4 stream over single pipe
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className={`btn btn-sm ${streamMode === 'wasm' ? 'btn-primary' : 'btn-secondary'}`}
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "flex-start",
+                              padding: "10px",
+                              height: "auto",
+                              textAlign: "left",
+                              borderRadius: "var(--r-md)",
+                              border: streamMode === 'wasm' ? "1px solid var(--primary)" : "1px solid var(--border)",
+                            }}
+                            onClick={() => setStreamMode('wasm')}
+                            disabled={loading}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: "0.8125rem" }}>
+                              <Layers size={14} color={streamMode === 'wasm' ? '#fff' : '#f59e0b'} />
+                              Client WASM / MSE
+                            </div>
+                            <span style={{ fontSize: "0.6875rem", color: streamMode === 'wasm' ? "rgba(255,255,255,0.85)" : "var(--text-3)", marginTop: 3 }}>
+                              Host runs 0% FFmpeg, client demuxes in MSE
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    </>
                     ) : (
                       <div
                         onClick={handlePickFile}
@@ -385,7 +513,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                     >
                       <ShieldCheck size={16} style={{ flexShrink: 0, marginTop: 2 }} />
                       <span>
-                        <strong>1-Click Automated Streaming:</strong> Electron starts a local HTTP range server and connects a secure Cloudflare Quick Tunnel automatically. No port forwarding or setup required.
+                        <strong>1-Click Automated Streaming:</strong> Starts a local HTTP range server and connects a secure Cloudflare Quick Tunnel automatically. No port forwarding or setup required.
                       </span>
                     </div>
                   </>
@@ -496,11 +624,23 @@ export default function CreateRoomModal({ isOpen, onClose }) {
           </div>
 
           <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: "0.8125rem", color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ fontSize: "0.8125rem", color: "var(--text-2)", display: "flex", flexDirection: "column", gap: 4, flex: 1, marginRight: "var(--sp-4)" }}>
               {loading && tunnelStatusText && (
                 <>
-                  <Loader2 className="spinner" size={14} color="var(--primary)" />
-                  <span>{tunnelStatusText}</span>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <Loader2 className="spinner" size={14} color="var(--primary)" />
+                      <span style={{ fontWeight: 500, color: "var(--text-1)" }}>{tunnelStatusText}</span>
+                    </div>
+                    {tunnelProgress > 0 && (
+                      <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--primary)" }}>{tunnelProgress}%</span>
+                    )}
+                  </div>
+                  {tunnelProgress > 0 && (
+                    <div style={{ width: "100%", height: 3, background: "var(--border)", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ width: `${tunnelProgress}%`, height: "100%", background: "var(--primary)", transition: "width 0.2s ease" }} />
+                    </div>
+                  )}
                 </>
               )}
             </div>

@@ -12,11 +12,15 @@ import {
   RotateCw,
   ShieldAlert,
   Zap,
+  Subtitles,
+  Check,
+  FileText,
 } from 'lucide-react';
+import { createVttBlobUrl, getFriendlySubtitleLabel } from '../utils/subtitles.js';
 
 // Sync thresholds (seconds)
-const HARD_SEEK_THRESHOLD = 8.0;   // Only hard-seek if drift is > 8 seconds
-const CATCHUP_THRESHOLD = 0.5;     // Smoothly speed up/down if drift is > 0.5s
+const HARD_SEEK_THRESHOLD = 1.5;   // Hard-seek if drift exceeds 1.5s
+const CATCHUP_THRESHOLD = 0.3;     // Smoothly nudge speed if drift is > 0.3s
 
 function formatTime(s) {
   if (!isFinite(s) || isNaN(s)) return '0:00';
@@ -29,6 +33,10 @@ function formatTime(s) {
 
 const VideoPlayer = forwardRef(function VideoPlayer({
   src,
+  videoPath = null,
+  subtitleUrl = null,
+  knownDuration = null,
+  isLivePipe = null,
   streamObject = null,
   isP2P = false,
   p2pStatus = null,
@@ -48,18 +56,59 @@ const VideoPlayer = forwardRef(function VideoPlayer({
   const hlsRef = useRef(null);
   const isHostRef = useRef(isHost);
   isHostRef.current = isHost;
+  const sessionIdRef = useRef('client-' + Math.random().toString(36).substring(2, 9));
+  const streamOffsetRef = useRef(0);
+  const activeSubtitleTrackRef = useRef(null);
+  const isHlsSource = Boolean(src && src.includes('.m3u8'));
+  const isLivePipeStream = !isHlsSource && (isLivePipe !== null
+    ? Boolean(isLivePipe)
+    : Boolean(src && src.includes('/video')));
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+
+  const effectiveDuration = (knownDuration && isFinite(knownDuration) && knownDuration > 0)
+    ? knownDuration
+    : (duration && isFinite(duration) && duration > 0)
+      ? duration
+      : (isFinite(videoRef.current?.duration) && videoRef.current.duration > 0 ? videoRef.current.duration : 0);
   const [playing, setPlaying] = useState(false);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  const [autoplayMuted, setAutoplayMuted] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(false);
   const hideControlsTimer = useRef(null);
   const torrentSrcSetRef = useRef(false);
   const [torrentStatusText, setTorrentStatusText] = useState("");
   const [torrentError, setTorrentError] = useState("");
+
+  // Subtitle / Caption State
+  const [subtitlesMenuOpen, setSubtitlesMenuOpen] = useState(false);
+  const [activeSubtitleId, setActiveSubtitleId] = useState('off');
+  const [embeddedTracks, setEmbeddedTracks] = useState([]);
+  const [externalSubtitles, setExternalSubtitles] = useState([]);
+  const hiddenSubFileInputRef = useRef(null);
+  const subtitleBlobUrlsRef = useRef(new Set());
+
+  // Revoke any created blob URLs on unmount
+  useEffect(() => {
+    const urls = subtitleBlobUrlsRef.current;
+    return () => {
+      urls.forEach((url) => {
+        try { URL.revokeObjectURL(url); } catch {}
+      });
+    };
+  }, []);
+
+  // Sync volume and muted state to DOM element
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) {
+      video.volume = volume;
+      video.muted = muted;
+    }
+  }, [volume, muted]);
 
   const bumpControls = useCallback(() => {
     setControlsVisible(true);
@@ -69,9 +118,28 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     }, 3500);
   }, []);
 
+  const handleUnmutePrompt = useCallback((e) => {
+    e?.stopPropagation?.();
+    const video = videoRef.current;
+    if (video) {
+      video.muted = false;
+      const targetVol = volume > 0 ? volume : 1;
+      video.volume = targetVol;
+      setVolume(targetVol);
+      setMuted(false);
+      setAutoplayMuted(false);
+      if (video.paused) {
+        video.play().catch(() => {});
+      }
+    }
+  }, [volume]);
+
   const handleContainerClick = useCallback((e) => {
-    // If clicked on input or button, keep controls visible
-    if (e.target.closest("button") || e.target.closest("input")) {
+    if (autoplayMuted && videoRef.current?.muted) {
+      handleUnmutePrompt(e);
+    }
+    // If clicked on input, button, or captions menu, keep controls visible
+    if (e.target.closest("button") || e.target.closest("input") || e.target.closest(".player-captions-menu")) {
       bumpControls();
       return;
     }
@@ -85,7 +153,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         return false;
       }
     });
-  }, [bumpControls]);
+  }, [bumpControls, autoplayMuted, handleUnmutePrompt]);
   const [hostReconnecting, setHostReconnecting] = useState(false);
 
   // WebRTC remote streamObject attachment (Viewer in P2P mode)
@@ -94,18 +162,41 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     if (!video) return;
 
     if (streamObject) {
-      console.log("[VideoPlayer] Attaching WebRTC streamObject to video element");
+      console.log(
+        "[VideoPlayer] Attaching WebRTC streamObject. Tracks - Video:",
+        streamObject.getVideoTracks().length,
+        "Audio:",
+        streamObject.getAudioTracks().length
+      );
       video.srcObject = streamObject;
+
+      const handleTrackChange = () => {
+        console.log(
+          "[VideoPlayer] streamObject track change. Video:",
+          streamObject.getVideoTracks().length,
+          "Audio:",
+          streamObject.getAudioTracks().length
+        );
+        video.srcObject = new MediaStream(streamObject.getTracks());
+        video.play().catch(() => {});
+      };
+
+      streamObject.addEventListener("addtrack", handleTrackChange);
+      streamObject.addEventListener("removetrack", handleTrackChange);
+
       const playPromise = video.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
           console.warn("[VideoPlayer] Autoplay prevented by browser, muting to allow initial render:", err);
           video.muted = true;
           setMuted(true);
+          setAutoplayMuted(true);
           video.play().catch(() => {});
         });
       }
       return () => {
+        streamObject.removeEventListener("addtrack", handleTrackChange);
+        streamObject.removeEventListener("removetrack", handleTrackChange);
         video.srcObject = null;
       };
     }
@@ -274,6 +365,71 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     }, 650);
   }, []);
 
+  const applySubtitleTrack = useCallback((track, offset = 0) => {
+    const video = videoRef.current;
+    if (!video || !track) return;
+
+    if (video.textTracks) {
+      for (let i = 0; i < video.textTracks.length; i++) {
+        video.textTracks[i].mode = 'disabled';
+      }
+    }
+    const existingTracks = video.querySelectorAll('track[data-wt-sub]');
+    existingTracks.forEach((t) => t.remove());
+
+    const blobUrl = createVttBlobUrl(track.content || '', track.format || 'vtt', offset);
+    subtitleBlobUrlsRef.current.add(blobUrl);
+
+    const trackEl = document.createElement('track');
+    trackEl.kind = 'subtitles';
+    trackEl.label = track.label;
+    trackEl.src = blobUrl;
+    trackEl.srclang = track.language || 'en';
+    trackEl.default = true;
+    trackEl.setAttribute('data-wt-sub', 'true');
+    trackEl.setAttribute('id', `sub-${track.id}`);
+
+    video.appendChild(trackEl);
+    trackEl.track.mode = 'showing';
+  }, []);
+
+  const reloadLiveStreamAt = useCallback((targetTime, shouldPlay = true) => {
+    const video = videoRef.current;
+    if (!video || !src) return;
+    streamOffsetRef.current = targetTime;
+    setCurrentTime(targetTime);
+    const baseUrl = src.split('?')[0];
+    video.src = `${baseUrl}?start=${targetTime}&sessionId=${sessionIdRef.current}&_t=${Date.now()}`;
+    video.load();
+    if (shouldPlay) {
+      video.play().catch(() => {});
+    }
+    if (activeSubtitleTrackRef.current) {
+      applySubtitleTrack(activeSubtitleTrackRef.current, targetTime);
+    }
+  }, [src, applySubtitleTrack]);
+
+  useEffect(() => {
+    if (knownDuration && isFinite(knownDuration) && knownDuration > 0) {
+      setDuration(knownDuration);
+    }
+  }, [knownDuration]);
+
+  useEffect(() => {
+    if (!src) return;
+    const baseUrl = src.replace(/\/video(\?.*)?$/, '');
+    if (!baseUrl || baseUrl === src) return;
+
+    fetch(`${baseUrl}/health`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.duration && isFinite(data.duration) && data.duration > 0) {
+          setDuration(data.duration);
+        }
+      })
+      .catch(() => {});
+  }, [src]);
+
   // Initialize and load source
   useEffect(() => {
     if (!src || !videoRef.current) return;
@@ -282,7 +438,12 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     const isHls = src.includes('.m3u8');
 
     if (isHls && Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+      });
       hlsRef.current = hls;
       hls.loadSource(src);
       hls.attachMedia(video);
@@ -305,9 +466,14 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           }
         }
       });
-    } else {
-      // Direct progressive streaming (MP4 / WebM / native browser player)
+    } else if (isHls && video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = src;
+      video.load();
+    } else {
+      const streamUrlWithSession = isLivePipeStream && !src.includes('sessionId=')
+        ? `${src}${src.includes('?') ? '&' : '?'}sessionId=${sessionIdRef.current}`
+        : src;
+      video.src = streamUrlWithSession;
       video.load();
     }
 
@@ -317,7 +483,262 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         hlsRef.current = null;
       }
     };
-  }, [src]);
+  }, [src, isLivePipeStream]);
+
+  // Refresh embedded subtitles from HTML5 video element
+  const refreshEmbeddedTracks = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !video.textTracks) return;
+
+    const found = [];
+    for (let i = 0; i < video.textTracks.length; i++) {
+      const t = video.textTracks[i];
+      if (t.kind === 'subtitles' || t.kind === 'captions' || !t.kind) {
+        if (t.id && (t.id.startsWith('ext-') || t.id.startsWith('sub-'))) continue;
+        const label = t.label || (t.language ? `Language: ${t.language.toUpperCase()}` : `Track ${i + 1}`);
+        found.push({
+          id: `embedded-${i}`,
+          index: i,
+          label,
+          language: t.language,
+          kind: t.kind,
+        });
+      }
+    }
+    if (found.length > 0) {
+      setEmbeddedTracks((prev) => {
+        const extracted = prev.filter((p) => p.blobUrl);
+        const existing = new Set(extracted.map((p) => p.id));
+        const filtered = found.filter((p) => !existing.has(p.id));
+        return [...extracted, ...filtered];
+      });
+    }
+  }, []);
+
+  // Auto-detect local matching subtitles (same basename as video) & embedded tracks in Electron
+  useEffect(() => {
+    if (!window.electronAPI?.findMatchingSubtitles) return;
+    const targetPath = videoPath || (typeof window !== 'undefined' ? window.__hostFilePath : null);
+
+    window.electronAPI.findMatchingSubtitles(targetPath).then((matches) => {
+      if (!matches || matches.length === 0) return;
+      console.log(`[VideoPlayer] Received ${matches.length} matching subtitle/embedded item(s)`);
+
+      const embeddedFound = [];
+      const externalFound = [];
+
+      matches.forEach((m, idx) => {
+        const blobUrl = createVttBlobUrl(m.content, m.format);
+        subtitleBlobUrlsRef.current.add(blobUrl);
+
+        if (m.isEmbedded) {
+          const trackLabel = m.title || (m.language && m.language !== 'und' ? `Track ${m.trackNumber || idx + 1} (${m.language.toUpperCase()})` : `Embedded Track ${m.trackNumber || idx + 1}`);
+          embeddedFound.push({
+            id: `embedded-ext-${m.streamIndex ?? idx}`,
+            label: trackLabel,
+            language: m.language,
+            content: m.content,
+            format: m.format || 'vtt',
+            blobUrl,
+            isEmbedded: true,
+          });
+        } else {
+          const friendlyLabel = getFriendlySubtitleLabel(m.fileName);
+          externalFound.push({
+            id: `external-auto-${idx}`,
+            label: friendlyLabel,
+            fileName: m.fileName,
+            format: m.format || 'srt',
+            content: m.content,
+            blobUrl,
+            isAutoDetected: true,
+          });
+        }
+      });
+
+      if (embeddedFound.length > 0) {
+        setEmbeddedTracks((prev) => {
+          const existing = new Set(prev.map((p) => p.id));
+          const filtered = embeddedFound.filter((e) => !existing.has(e.id));
+          return [...prev, ...filtered];
+        });
+      }
+
+      if (externalFound.length > 0) {
+        setExternalSubtitles((prev) => {
+          const existingNames = new Set(prev.map((p) => p.fileName));
+          const filtered = externalFound.filter((n) => !existingNames.has(n.fileName));
+          return [...prev, ...filtered];
+        });
+      }
+    }).catch((err) => {
+      console.warn("[VideoPlayer] Error finding matching subtitles:", err);
+    });
+  }, [videoPath, src]);
+
+  // Auto-detect extracted HLS/room subtitles from subtitleUrl, window, or HLS stream URL
+  useEffect(() => {
+    const subUrl = subtitleUrl
+      || (typeof window !== 'undefined' ? window.__hostSubtitleUrl : null)
+      || (isHlsSource && src ? `${src.replace(/\/stream\.m3u8.*$/, '')}/subtitles.vtt` : null);
+
+    if (!subUrl) return;
+
+    fetch(subUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((vttContent) => {
+        if (!vttContent || !vttContent.trim().startsWith('WEBVTT')) return;
+        const blobUrl = createVttBlobUrl(vttContent, 'vtt');
+        subtitleBlobUrlsRef.current.add(blobUrl);
+        const subTrack = {
+          id: 'external-hls-sub',
+          label: 'Extracted Subtitles (VTT)',
+          fileName: 'subtitles.vtt',
+          format: 'vtt',
+          content: vttContent,
+          blobUrl,
+          isAutoDetected: true,
+        };
+        setExternalSubtitles((prev) => {
+          if (prev.some((t) => t.id === 'external-hls-sub')) return prev;
+          return [subTrack, ...prev];
+        });
+      })
+      .catch(() => {});
+  }, [subtitleUrl, isHlsSource, src]);
+
+  // Activate chosen subtitle
+  const handleSelectSubtitle = useCallback((trackId) => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    setActiveSubtitleId(trackId);
+    setSubtitlesMenuOpen(false);
+
+    if (trackId === 'off') {
+      activeSubtitleTrackRef.current = null;
+      if (video.textTracks) {
+        for (let i = 0; i < video.textTracks.length; i++) {
+          video.textTracks[i].mode = 'disabled';
+        }
+      }
+      const existingTracks = video.querySelectorAll('track[data-wt-sub]');
+      existingTracks.forEach((t) => t.remove());
+      showHud({ icon: 'subtitles', text: 'Subtitles Off' });
+      return;
+    }
+
+    if (trackId.startsWith('embedded-')) {
+      const embedded = embeddedTracks.find((t) => t.id === trackId);
+      if (embedded) {
+        activeSubtitleTrackRef.current = embedded;
+        applySubtitleTrack(embedded, isLivePipeStream ? streamOffsetRef.current : 0);
+        showHud({ icon: 'subtitles', text: embedded.label });
+        return;
+      }
+    }
+
+    if (trackId.startsWith('external-')) {
+      const sub = externalSubtitles.find((s) => s.id === trackId);
+      if (sub) {
+        activeSubtitleTrackRef.current = sub;
+        applySubtitleTrack(sub, isLivePipeStream ? streamOffsetRef.current : 0);
+        showHud({ icon: 'subtitles', text: sub.label });
+      }
+    }
+  }, [embeddedTracks, externalSubtitles, showHud, applySubtitleTrack, isLivePipeStream]);
+
+  // Load custom subtitle file
+  const handleLoadCustomSubtitle = useCallback(async () => {
+    setSubtitlesMenuOpen(false);
+
+    if (window.electronAPI?.selectSubtitleFile) {
+      try {
+        const file = await window.electronAPI.selectSubtitleFile();
+        if (!file) return;
+
+        const blobUrl = createVttBlobUrl(file.content, file.format);
+        subtitleBlobUrlsRef.current.add(blobUrl);
+        const id = `external-custom-${Date.now()}`;
+        const newSub = {
+          id,
+          label: getFriendlySubtitleLabel(file.fileName),
+          fileName: file.fileName,
+          format: file.format,
+          content: file.content,
+          blobUrl,
+          isAutoDetected: false,
+        };
+
+        setExternalSubtitles(prev => [...prev, newSub]);
+        handleSelectSubtitle(id);
+      } catch (err) {
+        console.error("Failed to select subtitle file:", err);
+      }
+      return;
+    }
+
+    hiddenSubFileInputRef.current?.click();
+  }, [handleSelectSubtitle]);
+
+  const handleBrowserSubtitleSelected = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result;
+      if (!content) return;
+
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'srt';
+      const blobUrl = createVttBlobUrl(content, ext);
+      subtitleBlobUrlsRef.current.add(blobUrl);
+      const id = `external-browser-${Date.now()}`;
+      const newSub = {
+        id,
+        label: getFriendlySubtitleLabel(file.name),
+        fileName: file.name,
+        format: ext,
+        content,
+        blobUrl,
+        isAutoDetected: false,
+      };
+
+      setExternalSubtitles(prev => [...prev, newSub]);
+      handleSelectSubtitle(id);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }, [handleSelectSubtitle]);
+
+  const toggleSubtitles = useCallback(() => {
+    if (activeSubtitleId !== 'off') {
+      handleSelectSubtitle('off');
+    } else {
+      if (externalSubtitles.length > 0) {
+        handleSelectSubtitle(externalSubtitles[0].id);
+      } else if (embeddedTracks.length > 0) {
+        handleSelectSubtitle(embeddedTracks[0].id);
+      } else {
+        setSubtitlesMenuOpen(prev => !prev);
+      }
+    }
+  }, [activeSubtitleId, externalSubtitles, embeddedTracks, handleSelectSubtitle]);
+
+  // Close subtitles menu on outside click
+  useEffect(() => {
+    if (!subtitlesMenuOpen) return;
+    const handleOutsideClick = (e) => {
+      if (!e.target.closest('.player-captions-wrapper')) {
+        setSubtitlesMenuOpen(false);
+      }
+    };
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, [subtitlesMenuOpen]);
 
   // Video element event listeners
   useEffect(() => {
@@ -325,7 +746,15 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     if (!video) return;
 
     const onLoadedMetadata = () => {
-      setDuration(video.duration);
+      if (isFinite(video.duration) && video.duration > 0) {
+        setDuration((prev) => {
+          if (knownDuration && isFinite(knownDuration) && knownDuration > 0) {
+            return Math.max(knownDuration, video.duration);
+          }
+          return Math.max(prev || 0, video.duration);
+        });
+      }
+      refreshEmbeddedTracks();
       if (isHostRef.current && onStreamReady) {
         try {
           const stream = video.captureStream ? video.captureStream() : (video.mozCaptureStream ? video.mozCaptureStream() : null);
@@ -339,15 +768,20 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       }
       if (!hasInitializedTime.current) {
         if (pendingInitialTime.current > 0) {
-          video.currentTime = pendingInitialTime.current;
-          setCurrentTime(pendingInitialTime.current);
+          if (isLivePipeStream) {
+            reloadLiveStreamAt(pendingInitialTime.current, pendingInitialPlaying.current);
+          } else {
+            video.currentTime = pendingInitialTime.current;
+            setCurrentTime(pendingInitialTime.current);
+          }
         }
         hasInitializedTime.current = true;
         if (pendingInitialPlaying.current || wasPlayingBeforeDisconnect) {
           video.play()
             .then(() => {
               if (isHostRef.current) {
-                onPlay?.(video.currentTime);
+                const currentAbsolute = isLivePipeStream ? streamOffsetRef.current + video.currentTime : video.currentTime;
+                onPlay?.(currentAbsolute);
               }
             })
             .catch(() => {
@@ -360,26 +794,37 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     };
 
     const onTU = () => {
-      setCurrentTime(video.currentTime);
+      const currentAbsolute = isLivePipeStream
+        ? streamOffsetRef.current + video.currentTime
+        : video.currentTime;
+      setCurrentTime(currentAbsolute);
 
       // If lagging viewer is catching up to host pause timestamp:
       if (pendingPauseTarget.current !== null) {
-        if (video.currentTime >= pendingPauseTarget.current - 0.1) {
+        if (currentAbsolute >= pendingPauseTarget.current - 0.1) {
           clearTimeout(pendingPauseTimer.current);
           const snapTime = pendingPauseTarget.current;
           pendingPauseTarget.current = null;
           video.pause();
-          video.currentTime = snapTime;
           video.playbackRate = 1.0;
         }
       }
 
       // Guard: do not report 0.0s time update before initial timestamp has been established
       if (hasInitializedTime.current) {
-        onTimeUpdate?.(video.currentTime);
+        onTimeUpdate?.(currentAbsolute);
       }
     };
-    const onDM = () => setDuration(video.duration);
+    const onDM = () => {
+      if (isFinite(video.duration) && video.duration > 0) {
+        setDuration((prev) => {
+          if (knownDuration && isFinite(knownDuration) && knownDuration > 0) {
+            return Math.max(knownDuration, video.duration);
+          }
+          return Math.max(prev || 0, video.duration);
+        });
+      }
+    };
     const onWait = () => setBuffering(true);
     const onCanPlay = () => setBuffering(false);
     const onLoadedData = () => setBuffering(false);
@@ -391,6 +836,13 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       setPlaying(false);
       setBuffering(false);
     };
+    const onVolumeChange = () => {
+      setVolume(video.volume);
+      setMuted(video.muted);
+      if (!video.muted && video.volume > 0) {
+        setAutoplayMuted(false);
+      }
+    };
 
     video.addEventListener('loadedmetadata', onLoadedMetadata);
     video.addEventListener('timeupdate', onTU);
@@ -400,6 +852,13 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     video.addEventListener('loadeddata', onLoadedData);
     video.addEventListener('playing', onPlayEvent);
     video.addEventListener('pause', onPauseEvent);
+    video.addEventListener('volumechange', onVolumeChange);
+
+    const textTracks = video.textTracks;
+    if (textTracks) {
+      textTracks.addEventListener('addtrack', refreshEmbeddedTracks);
+      textTracks.addEventListener('removetrack', refreshEmbeddedTracks);
+    }
 
     return () => {
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
@@ -410,8 +869,14 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       video.removeEventListener('loadeddata', onLoadedData);
       video.removeEventListener('playing', onPlayEvent);
       video.removeEventListener('pause', onPauseEvent);
+      video.removeEventListener('volumechange', onVolumeChange);
+
+      if (textTracks) {
+        textTracks.removeEventListener('addtrack', refreshEmbeddedTracks);
+        textTracks.removeEventListener('removetrack', refreshEmbeddedTracks);
+      }
     };
-  }, [onTimeUpdate]);
+  }, [onTimeUpdate, refreshEmbeddedTracks]);
 
   // Expose imperative handle for sync message dispatch
   useImperativeHandle(ref, () => ({
@@ -426,7 +891,15 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           const target = roomState.currentTime || 0;
           pendingInitialTime.current = target;
           pendingInitialPlaying.current = Boolean(roomState.playing);
-          if (video.readyState >= 1) {
+          if (isLivePipeStream) {
+            if (target > 0) {
+              reloadLiveStreamAt(target, roomState.playing);
+            }
+            hasInitializedTime.current = true;
+            if (roomState.playing) {
+              video.play().catch(() => {});
+            }
+          } else if (video.readyState >= 1) {
             if (target > 0) {
               video.currentTime = target;
               setCurrentTime(target);
@@ -439,20 +912,30 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         }
         break;
       }
+
       case 'play': {
         clearTimeout(pendingPauseTimer.current);
         pendingPauseTarget.current = null;
         setHostReconnecting(false);
-        if (isHostRef.current) break; // Host already initiated play locally
+        if (isHostRef.current) break;
+        const currentAbsolute = isLivePipeStream ? streamOffsetRef.current + video.currentTime : video.currentTime;
         const networkLatency = wsMsg.serverTime ? Math.max(0, (Date.now() - wsMsg.serverTime) / 1000 / 2) : 0;
-        const targetTime = (wsMsg.position ?? video.currentTime) + networkLatency;
-        
-        // Only seek if far off (e.g. > 3s)
-        if (Math.abs(video.currentTime - targetTime) > 3) {
-          video.currentTime = targetTime;
+        const targetTime = (wsMsg.position ?? currentAbsolute) + networkLatency;
+
+        if (isLivePipeStream) {
+          if (Math.abs(currentAbsolute - targetTime) > 3) {
+            reloadLiveStreamAt(targetTime, true);
+          } else {
+            video.playbackRate = 1.0;
+            video.play().catch((err) => console.log('[Playback] Auto-play blocked:', err));
+          }
+        } else {
+          if (Math.abs(video.currentTime - targetTime) > 3) {
+            video.currentTime = targetTime;
+          }
+          video.playbackRate = 1.0;
+          video.play().catch((err) => console.log('[Playback] Auto-play blocked:', err));
         }
-        video.playbackRate = 1.0;
-        video.play().catch((err) => console.log('[Playback] Auto-play blocked:', err));
         break;
       }
 
@@ -463,11 +946,11 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         if (isHostRef.current) break;
 
         const targetPauseTime = typeof wsMsg.position === 'number' ? wsMsg.position : null;
-        const CATCHUP_MAX_LAG = 10.0; // Up to 10s lag: keep playing until target timestamp
-        const lag = targetPauseTime !== null ? (targetPauseTime - video.currentTime) : 0;
+        const currentAbsolute = isLivePipeStream ? streamOffsetRef.current + video.currentTime : video.currentTime;
+        const CATCHUP_MAX_LAG = 10.0;
+        const lag = targetPauseTime !== null ? (targetPauseTime - currentAbsolute) : 0;
 
         if (targetPauseTime !== null && lag > 0.3 && lag <= CATCHUP_MAX_LAG && !video.paused) {
-          // Viewer is behind: let them continue playing until they reach the host pause position
           pendingPauseTarget.current = targetPauseTime;
           video.playbackRate = 1.0;
 
@@ -477,7 +960,11 @@ const VideoPlayer = forwardRef(function VideoPlayer({
               const snap = pendingPauseTarget.current;
               pendingPauseTarget.current = null;
               videoRef.current.pause();
-              videoRef.current.currentTime = snap;
+              if (isLivePipeStream) {
+                reloadLiveStreamAt(snap, false);
+              } else {
+                videoRef.current.currentTime = snap;
+              }
             }
           }, Math.max(500, (lag + 1.5) * 1000));
         } else {
@@ -485,7 +972,11 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           pendingPauseTarget.current = null;
           video.pause();
           if (targetPauseTime !== null) {
-            video.currentTime = targetPauseTime;
+            if (isLivePipeStream) {
+              reloadLiveStreamAt(targetPauseTime, false);
+            } else {
+              video.currentTime = targetPauseTime;
+            }
           }
           video.playbackRate = 1.0;
         }
@@ -496,36 +987,38 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         clearTimeout(pendingPauseTimer.current);
         pendingPauseTarget.current = null;
         if (isHostRef.current) break;
-        video.currentTime = wsMsg.position ?? video.currentTime;
+        const target = wsMsg.position ?? 0;
+        if (isLivePipeStream) {
+          reloadLiveStreamAt(target, !video.paused);
+        } else {
+          video.currentTime = target;
+        }
         video.playbackRate = 1.0;
         break;
       }
 
       case 'sync_tick': {
-        // Do not sync host to themselves
         if (isHostRef.current || !wsMsg.playing) break;
-        // Do not interrupt while playing towards pause target
         if (pendingPauseTarget.current !== null) break;
-
-        // If the video is currently buffering or not yet playing, don't interrupt it!
         if (video.seeking || video.readyState < 3) break;
 
+        const currentAbsolute = isLivePipeStream ? streamOffsetRef.current + video.currentTime : video.currentTime;
         const networkLatency = wsMsg.serverTime ? Math.max(0, (Date.now() - wsMsg.serverTime) / 1000 / 2) : 0;
-        const expected = (wsMsg.position ?? video.currentTime) + networkLatency;
-        const drift = expected - video.currentTime; // positive = behind host, negative = ahead of host
+        const expected = (wsMsg.position ?? currentAbsolute) + networkLatency;
+        const drift = expected - currentAbsolute;
 
         if (Math.abs(drift) > HARD_SEEK_THRESHOLD) {
-          // Large desync (> 8s, e.g. skipped forward) -> perform hard seek
-          video.currentTime = expected;
+          if (isLivePipeStream) {
+            reloadLiveStreamAt(expected, true);
+          } else {
+            video.currentTime = expected;
+          }
           video.playbackRate = 1.0;
         } else if (drift > CATCHUP_THRESHOLD) {
-          // Slightly behind host: smoothly speed up by 8% to catch up without buffer flush
-          video.playbackRate = 1.08;
+          video.playbackRate = 1.05;
         } else if (drift < -CATCHUP_THRESHOLD) {
-          // Slightly ahead of host: smoothly slow down by 5%
           video.playbackRate = 0.95;
         } else {
-          // Perfectly in sync (within 0.5s): normal speed
           if (video.playbackRate !== 1.0) {
             video.playbackRate = 1.0;
           }
@@ -542,21 +1035,31 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     const video = videoRef.current;
     if (!video) return;
 
+    if (autoplayMuted && video.muted) {
+      video.muted = false;
+      setMuted(false);
+      setAutoplayMuted(false);
+    }
+
     if (!isHostRef.current) {
       showHud({ icon: 'shield', text: 'Only host controls playback' });
       return;
     }
 
+    const currentAbsolute = isLivePipeStream
+      ? streamOffsetRef.current + video.currentTime
+      : video.currentTime;
+
     if (video.paused) {
       video.play().catch((err) => console.error('[Play failed]', err));
-      onPlay?.(video.currentTime);
+      onPlay?.(currentAbsolute);
       showHud({ icon: 'play', text: 'Play' });
     } else {
       video.pause();
-      onPause?.(video.currentTime);
+      onPause?.(currentAbsolute);
       showHud({ icon: 'pause', text: 'Pause' });
     }
-  }, [onPlay, onPause, showHud]);
+  }, [onPlay, onPause, showHud, autoplayMuted, isLivePipeStream]);
 
   // Skip relative seconds (+5, -5, +10, -10, etc.)
   const handleSkip = useCallback(
@@ -570,10 +1073,21 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         return;
       }
 
-      const totalDur = duration || video.duration || 0;
-      const target = Math.max(0, Math.min(totalDur, video.currentTime + seconds));
-      video.currentTime = target;
-      setCurrentTime(target);
+      const totalDur = effectiveDuration || (isFinite(video.duration) ? video.duration : 0);
+      const currentAbsolute = isLivePipeStream
+        ? streamOffsetRef.current + video.currentTime
+        : video.currentTime;
+      const target = Math.max(0, Math.min(totalDur, currentAbsolute + seconds));
+
+      if (isLivePipeStream) {
+        reloadLiveStreamAt(target, !video.paused);
+      } else {
+        if (isHlsSource && (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)) {
+          (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)(target).catch(() => {});
+        }
+        video.currentTime = target;
+        setCurrentTime(target);
+      }
       onSeek?.(target);
 
       showHud({
@@ -581,19 +1095,27 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         text: `${seconds > 0 ? '+' : ''}${seconds}s`,
       });
     },
-    [duration, onSeek, showHud]
+    [effectiveDuration, onSeek, showHud, isLivePipeStream, reloadLiveStreamAt, isHlsSource]
   );
 
   // Absolute seek from range slider
   const handleSeek = useCallback(
     (e) => {
       if (!isHostRef.current || !videoRef.current) return;
-      const t = Number(e.target.value);
-      videoRef.current.currentTime = t;
-      setCurrentTime(t);
-      onSeek?.(t);
+      const targetTime = Number(e.target.value);
+      const video = videoRef.current;
+      if (isLivePipeStream) {
+        reloadLiveStreamAt(targetTime, !video.paused);
+      } else {
+        if (isHlsSource && (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)) {
+          (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)(targetTime).catch(() => {});
+        }
+        video.currentTime = targetTime;
+        setCurrentTime(targetTime);
+      }
+      onSeek?.(targetTime);
     },
-    [onSeek]
+    [onSeek, isLivePipeStream, reloadLiveStreamAt, isHlsSource]
   );
 
   const toggleMute = useCallback(() => {
@@ -602,6 +1124,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     const nextMuted = !video.muted;
     video.muted = nextMuted;
     setMuted(nextMuted);
+    if (!nextMuted) setAutoplayMuted(false);
     showHud({
       icon: nextMuted ? 'mute' : 'volume',
       text: nextMuted ? 'Muted' : 'Unmuted',
@@ -617,6 +1140,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       video.muted = nextVol === 0;
       setVolume(nextVol);
       setMuted(nextVol === 0);
+      if (nextVol > 0) setAutoplayMuted(false);
       showHud({
         icon: nextVol === 0 ? 'mute' : 'volume',
         text: `${Math.round(nextVol * 100)}%`,
@@ -633,6 +1157,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     }
     setVolume(v);
     setMuted(v === 0);
+    if (v > 0) setAutoplayMuted(false);
   };
 
   const toggleFullscreen = useCallback(() => {
@@ -701,6 +1226,11 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           toggleMute();
           break;
 
+        case 'KeyC':
+          e.preventDefault();
+          toggleSubtitles();
+          break;
+
         case 'KeyF':
           e.preventDefault();
           toggleFullscreen();
@@ -713,7 +1243,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handlePlayPause, handleSkip, changeVolume, toggleMute, toggleFullscreen]);
+  }, [handlePlayPause, handleSkip, changeVolume, toggleMute, toggleSubtitles, toggleFullscreen]);
 
   return (
     <div onClick={handleContainerClick} onMouseMove={bumpControls} style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: '#000' }}>
@@ -918,6 +1448,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           {hud.icon === 'volume' && <Volume2 size={32} color="#fff" />}
           {hud.icon === 'mute' && <VolumeX size={32} color="#ef4444" />}
           {hud.icon === 'shield' && <ShieldAlert size={32} color="#eab308" />}
+          {hud.icon === 'subtitles' && <Subtitles size={32} color="#fff" />}
 
           <span
             style={{
@@ -932,13 +1463,25 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         </div>
       )}
 
+      {/* Audio Muted Indicator Banner */}
+      {muted && playing && (
+        <button
+          className="player-unmute-banner"
+          onClick={handleUnmutePrompt}
+          title="Click to unmute video"
+        >
+          <VolumeX size={15} />
+          <span>Audio is muted — Click to unmute</span>
+        </button>
+      )}
+
       {/* Player Controls Bar */}
       <div className={`player-controls ${controlsVisible ? "visible" : ""}`}>
         <input
           type="range"
           className="player-seek"
           min={0}
-          max={duration || 0}
+          max={effectiveDuration || 0}
           step={0.5}
           value={currentTime}
           onChange={handleSeek}
@@ -1002,7 +1545,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           </button>
 
           <span className="player-time">
-            {formatTime(currentTime)} / {formatTime(duration)}
+            {formatTime(currentTime)} / {formatTime(effectiveDuration)}
           </span>
 
           <div style={{ flex: 1 }} />
@@ -1034,6 +1577,141 @@ const VideoPlayer = forwardRef(function VideoPlayer({
             }}
           />
 
+          {/* Captions / Subtitles Button & Popover */}
+          <div className="player-captions-wrapper">
+            <button
+              className={`btn-icon ${activeSubtitleId !== 'off' ? 'active' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSubtitlesMenuOpen((prev) => !prev);
+              }}
+              title={`Subtitles (${activeSubtitleId !== 'off' ? 'On' : 'Off'}) [C]`}
+              style={{
+                color: activeSubtitleId !== 'off' ? 'var(--primary)' : 'inherit',
+                position: 'relative',
+                marginRight: 'var(--sp-2)',
+              }}
+            >
+              <Subtitles size={18} />
+              {activeSubtitleId !== 'off' && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    bottom: 3,
+                    right: 3,
+                    width: 5,
+                    height: 5,
+                    borderRadius: '50%',
+                    background: 'var(--primary)',
+                  }}
+                />
+              )}
+            </button>
+
+            {/* Subtitles Menu */}
+            {subtitlesMenuOpen && (
+              <div
+                className="player-captions-menu"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="player-captions-header">Subtitles</div>
+
+                {/* Off Option */}
+                <button
+                  className={`player-captions-item ${activeSubtitleId === 'off' ? 'active' : ''}`}
+                  onClick={() => handleSelectSubtitle('off')}
+                >
+                  <span className="player-captions-check">
+                    {activeSubtitleId === 'off' && <Check size={14} />}
+                  </span>
+                  <span>Off</span>
+                </button>
+
+                {/* Local matching files (Same name as video) */}
+                {externalSubtitles.filter((s) => s.isAutoDetected).length > 0 && (
+                  <>
+                    <div className="player-captions-divider" />
+                    <div className="player-captions-subheader">Local File (Matching Video)</div>
+                    {externalSubtitles.filter((s) => s.isAutoDetected).map((sub) => (
+                      <button
+                        key={sub.id}
+                        className={`player-captions-item ${activeSubtitleId === sub.id ? 'active' : ''}`}
+                        onClick={() => handleSelectSubtitle(sub.id)}
+                        title={sub.fileName}
+                      >
+                        <span className="player-captions-check">
+                          {activeSubtitleId === sub.id && <Check size={14} />}
+                        </span>
+                        <span className="player-captions-text">
+                          {sub.label}
+                        </span>
+                        <span className="player-captions-tag">Local</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                {/* Embedded Subtitles inside container */}
+                {embeddedTracks.length > 0 && (
+                  <>
+                    <div className="player-captions-divider" />
+                    <div className="player-captions-subheader">Embedded Tracks</div>
+                    {embeddedTracks.map((track) => (
+                      <button
+                        key={track.id}
+                        className={`player-captions-item ${activeSubtitleId === track.id ? 'active' : ''}`}
+                        onClick={() => handleSelectSubtitle(track.id)}
+                      >
+                        <span className="player-captions-check">
+                          {activeSubtitleId === track.id && <Check size={14} />}
+                        </span>
+                        <span className="player-captions-text">
+                          {track.label}
+                        </span>
+                        <span className="player-captions-tag">Embedded</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                {/* Custom Loaded Subtitles */}
+                {externalSubtitles.filter((s) => !s.isAutoDetected).length > 0 && (
+                  <>
+                    <div className="player-captions-divider" />
+                    <div className="player-captions-subheader">Loaded Subtitles</div>
+                    {externalSubtitles.filter((s) => !s.isAutoDetected).map((sub) => (
+                      <button
+                        key={sub.id}
+                        className={`player-captions-item ${activeSubtitleId === sub.id ? 'active' : ''}`}
+                        onClick={() => handleSelectSubtitle(sub.id)}
+                        title={sub.fileName}
+                      >
+                        <span className="player-captions-check">
+                          {activeSubtitleId === sub.id && <Check size={14} />}
+                        </span>
+                        <span className="player-captions-text">
+                          {sub.label}
+                        </span>
+                        <span className="player-captions-tag">Custom</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                <div className="player-captions-divider" />
+
+                {/* Choose file button */}
+                <button
+                  className="player-captions-item action"
+                  onClick={handleLoadCustomSubtitle}
+                >
+                  <FileText size={14} style={{ marginRight: 6 }} />
+                  <span>Choose subtitle file (.srt, .vtt)...</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Fullscreen button */}
           <button
             className="btn-icon"
@@ -1044,6 +1722,14 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           </button>
         </div>
       </div>
+
+      <input
+        type="file"
+        ref={hiddenSubFileInputRef}
+        accept=".srt,.vtt"
+        style={{ display: 'none' }}
+        onChange={handleBrowserSubtitleSelected}
+      />
     </div>
   );
 });

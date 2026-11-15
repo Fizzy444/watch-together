@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { getServerUrl, DEFAULT_SERVER_URL } from '../utils/serverUrl.js';
 import { useWebRTC } from '../hooks/useWebRTC.js';
 import { getRoom, getStreamStatus, closeRoom } from '../api/index.js';
 import { useWebSocket, getSessionClientId } from '../hooks/useWebSocket.js';
@@ -238,8 +239,8 @@ export default function Room() {
   }
 
   async function copyRoomLink() {
-    const serverUrl = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "") : "";
-    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:";
+    const serverUrl = getServerUrl() || DEFAULT_SERVER_URL;
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:" || window.location.hostname === "tauri.localhost";
     const baseUrl = (isLocal && serverUrl) ? serverUrl : window.location.origin;
     const url = `${baseUrl}/watch/${roomId}`;
     try {
@@ -320,7 +321,7 @@ export default function Room() {
   useEffect(() => {
     function onKeyDown(e) {
       if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName)) return;
-      if (e.key === 'c' || e.key === 'C') {
+      if ((e.key === 'c' || e.key === 'C') && e.shiftKey) {
         e.preventDefault();
         toggleSidebar();
       }
@@ -369,7 +370,7 @@ export default function Room() {
   }
 
   // Direct progressive streaming endpoint
-  const serverUrl = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "") : "";
+  const serverUrl = getServerUrl() || DEFAULT_SERVER_URL;
   const videoSrc = isTunnel ? ((isHost && window.__hostLocalStreamUrl) ? window.__hostLocalStreamUrl : room.movie) : (streamReady ? `${serverUrl}/api/rooms/${roomId}/video` : null);
 
   return (
@@ -597,6 +598,7 @@ export default function Room() {
             <VideoPlayer
               ref={videoPlayerRef}
               src={videoSrc}
+              subtitleUrl={window.__hostSubtitleUrl || room?.subtitleUrl || null}
               streamObject={isP2P && !isHost ? remoteStream : null}
               isP2P={isP2P}
               isTorrent={isTorrent}
@@ -607,6 +609,9 @@ export default function Room() {
               initialTime={room?.currentTime || 0}
               initialPlaying={room?.playing || false}
               wasPlayingBeforeDisconnect={Boolean(room?.wasPlayingBeforeHostDisconnect || room?.hostDisconnected)}
+              videoPath={window.__hostFilePath || null}
+              knownDuration={window.__hostMovieDuration || room?.movieDuration || null}
+              isLivePipe={window.__hostIsLivePipe ?? null}
               onPlay={handlePlay}
               onPause={handlePause}
               onSeek={handleSeek}

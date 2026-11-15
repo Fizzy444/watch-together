@@ -12,6 +12,13 @@ server/.env
 dist/
 client/dist/
 dist-ssr/
+src-tauri/target/
+dist-electron/
+
+# Database
+server/data/*.db*
+server/data/*.sqlite*
+!server/data/.gitkeep
 
 # Media & Transcoded Segments (Never commit movies or HLS segments)
 server/media/*

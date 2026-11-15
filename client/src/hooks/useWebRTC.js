@@ -244,12 +244,13 @@ export function useWebRTC({
           viewerPcRef.current = pc;
 
           pc.ontrack = (event) => {
-            console.log("[WebRTC Viewer] Received remote track:", event.track.kind);
+            console.log("[WebRTC Viewer] Received remote track:", event.track.kind, event.track.id);
             if (event.streams && event.streams[0]) {
-              setRemoteStream(event.streams[0]);
+              // Wrap with new MediaStream so React detects reference change and updates video element pipeline
+              setRemoteStream(new MediaStream(event.streams[0].getTracks()));
             } else {
               setRemoteStream((prev) => {
-                const stream = prev || new MediaStream();
+                const stream = prev ? new MediaStream(prev.getTracks()) : new MediaStream();
                 stream.addTrack(event.track);
                 return stream;
               });

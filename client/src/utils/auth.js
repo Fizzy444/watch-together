@@ -1,6 +1,7 @@
 import { saveProfileName } from "./profile.js";
+import { getServerUrl } from "./serverUrl.js";
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL ? import.meta.env.VITE_SERVER_URL.replace(/\/+$/, "") : "";
+const SERVER_URL = getServerUrl();
 
 const TOKEN_KEY = "wt_auth_token";
 const USER_KEY = "wt_auth_user";
@@ -42,31 +43,55 @@ export function clearStoredAuth() {
 }
 
 export async function signupApi(username, password) {
-  const res = await fetch(`${SERVER_URL}/api/auth/signup`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || "Failed to sign up");
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
+  try {
+    const res = await fetch(`${SERVER_URL}/api/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to sign up");
+    }
+    setStoredAuth(data.user, data.token);
+    return data;
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error("Server request timed out. Please check your connection and try again.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  setStoredAuth(data.user, data.token);
-  return data;
 }
 
 export async function loginApi(username, password) {
-  const res = await fetch(`${SERVER_URL}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || "Failed to sign in");
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
+  try {
+    const res = await fetch(`${SERVER_URL}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to sign in");
+    }
+    setStoredAuth(data.user, data.token);
+    return data;
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error("Server request timed out. Please check your connection and try again.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  setStoredAuth(data.user, data.token);
-  return data;
 }
 
 export async function fetchCurrentUserApi() {

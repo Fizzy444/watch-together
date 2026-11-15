@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { getServerUrl } from '../utils/serverUrl.js';
 
 export function getSessionClientId() {
   let id = null;
@@ -39,8 +40,7 @@ export function useWebSocket(roomId, userName, onMessage) {
     }
     clearTimeout(reconnectTimer.current);
 
-    // Support remote Koyeb / cloud server or local dev server
-    const serverUrl = import.meta.env.VITE_SERVER_URL;
+    const serverUrl = getServerUrl();
     let wsHost = window.location.host;
     let protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 

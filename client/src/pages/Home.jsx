@@ -75,6 +75,7 @@ export default function Home() {
   }, []);
 
   function handleAuthSuccess(user) {
+    setAuthModalOpen(false);
     setCurrentUser(user);
     if (user?.username) {
       setProfileName(user.username);
@@ -189,10 +190,24 @@ export default function Home() {
         {/* Header Right Actions: Profile / Auth + Create Room */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
           {currentUser ? (
-            <ProfileBadge name={currentUser.username} />
+            <ProfileBadge
+              name={currentUser.username}
+              onSignOut={() => {
+                setCurrentUser(null);
+                navigate('/');
+              }}
+            />
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-              {profileName && <ProfileBadge name={profileName} />}
+              {profileName && (
+                <ProfileBadge
+                  name={profileName}
+                  onSignOut={() => {
+                    setProfileName('');
+                    navigate('/');
+                  }}
+                />
+              )}
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => {
@@ -484,6 +499,7 @@ export default function Home() {
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
         initialMode={authModalMode}
+        onSuccess={handleAuthSuccess}
         onAuthSuccess={handleAuthSuccess}
       />
     </div>

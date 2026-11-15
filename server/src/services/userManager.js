@@ -1,128 +1,120 @@
-import fs from "fs";
-import path from "path";
 import crypto from "crypto";
-import { fileURLToPath } from "url";
+import db from "../db.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USERS_FILE = path.resolve(__dirname, "../../data/users.json");
+const MIN_USERNAME_LENGTH = 3;
+const MAX_USERNAME_LENGTH = 30;
+const MIN_PASSWORD_LENGTH = 4;
+const KEY_LENGTH_BYTES = 64;
+const SALT_LENGTH_BYTES = 16;
+const TOKEN_LENGTH_BYTES = 32;
+const USERNAME_REGEX = /^[a-zA-Z0-9_-]+$/;
 
-// Ensure data folder exists
-fs.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
+const findUserByUsernameStatement = db.prepare(
+  "SELECT * FROM users WHERE username = ? COLLATE NOCASE"
+);
 
-/**
- * @typedef {Object} StoredUser
- * @property {string} id
- * @property {string} username
- * @property {string} salt
- * @property {string} hash
- * @property {number} createdAt
- */
+const insertUserStatement = db.prepare(
+  "INSERT INTO users (id, username, salt, hash, created_at) VALUES (?, ?, ?, ?, ?)"
+);
 
-function loadUsers() {
-  try {
-    if (!fs.existsSync(USERS_FILE)) return [];
-    const data = fs.readFileSync(USERS_FILE, "utf8");
-    return JSON.parse(data) || [];
-  } catch (err) {
-    console.error("[UserManager] Error loading users:", err.message);
-    return [];
-  }
-}
+const insertSessionStatement = db.prepare(
+  "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)"
+);
 
-function saveUsers(users) {
-  try {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), "utf8");
-  } catch (err) {
-    console.error("[UserManager] Error saving users:", err.message);
-  }
-}
+const findSessionUserStatement = db.prepare(
+  "SELECT u.id, u.username, u.created_at as createdAt FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ?"
+);
 
-// In-memory active sessions Map<token, { userId, username, createdAt }>
-const sessions = new Map();
+const deleteSessionStatement = db.prepare(
+  "DELETE FROM sessions WHERE token = ?"
+);
 
 function hashPassword(password, salt) {
-  return crypto.scryptSync(password, salt, 64).toString("hex");
+  return crypto.scryptSync(password, salt, KEY_LENGTH_BYTES).toString("hex");
 }
 
 function verifyPassword(password, salt, storedHash) {
   const hash = hashPassword(password, salt);
-  const bufA = Buffer.from(hash, "hex");
-  const bufB = Buffer.from(storedHash, "hex");
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
+  const hashBuffer = Buffer.from(hash, "hex");
+  const storedBuffer = Buffer.from(storedHash, "hex");
+  if (hashBuffer.length !== storedBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(hashBuffer, storedBuffer);
 }
 
-function createSession(user) {
-  const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, {
-    userId: user.id,
-    username: user.username,
-    createdAt: Date.now(),
-  });
+function createSession(userId) {
+  const token = crypto.randomBytes(TOKEN_LENGTH_BYTES).toString("hex");
+  const now = Date.now();
+  insertSessionStatement.run(token, userId, now);
   return token;
 }
 
-export function getUserByToken(token) {
-  if (!token) return null;
-  const session = sessions.get(token);
-  if (!session) return null;
-  return { id: session.userId, username: session.username };
-}
-
-export function revokeToken(token) {
-  if (token) {
-    sessions.delete(token);
-  }
-}
-
-export function createUser(username, password) {
+function validateCredentials(username, password) {
   const cleanUsername = (username || "").trim();
   const cleanPassword = (password || "").trim();
 
   if (!cleanUsername) {
     throw new Error("Username is required");
   }
-  if (cleanUsername.length < 3) {
-    throw new Error("Username must be at least 3 characters");
+  if (cleanUsername.length < MIN_USERNAME_LENGTH) {
+    throw new Error(`Username must be at least ${MIN_USERNAME_LENGTH} characters`);
   }
-  if (cleanUsername.length > 30) {
-    throw new Error("Username must not exceed 30 characters");
+  if (cleanUsername.length > MAX_USERNAME_LENGTH) {
+    throw new Error(`Username must not exceed ${MAX_USERNAME_LENGTH} characters`);
   }
-  if (!/^[a-zA-Z0-9_-]+$/.test(cleanUsername)) {
+  if (!USERNAME_REGEX.test(cleanUsername)) {
     throw new Error("Username can only contain letters, numbers, hyphens, and underscores");
   }
   if (!cleanPassword) {
     throw new Error("Password is required");
   }
-  if (cleanPassword.length < 4) {
-    throw new Error("Password must be at least 4 characters");
+  if (cleanPassword.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
   }
 
-  const users = loadUsers();
-  const existing = users.find((u) => u.username.toLowerCase() === cleanUsername.toLowerCase());
+  return { cleanUsername, cleanPassword };
+}
+
+export function getUserByToken(token) {
+  if (!token) {
+    return null;
+  }
+  const row = findSessionUserStatement.get(token);
+  if (!row) {
+    return null;
+  }
+  return {
+    id: row.id,
+    username: row.username,
+    createdAt: row.createdAt,
+  };
+}
+
+export function revokeToken(token) {
+  if (token) {
+    deleteSessionStatement.run(token);
+  }
+}
+
+export function createUser(username, password) {
+  const { cleanUsername, cleanPassword } = validateCredentials(username, password);
+
+  const existing = findUserByUsernameStatement.get(cleanUsername);
   if (existing) {
     throw new Error("Username is already taken");
   }
 
-  const salt = crypto.randomBytes(16).toString("hex");
+  const salt = crypto.randomBytes(SALT_LENGTH_BYTES).toString("hex");
   const hash = hashPassword(cleanPassword, salt);
   const id = crypto.randomUUID();
+  const createdAt = Date.now();
 
-  const newUser = {
-    id,
-    username: cleanUsername,
-    salt,
-    hash,
-    createdAt: Date.now(),
-  };
+  insertUserStatement.run(id, cleanUsername, salt, hash, createdAt);
+  const token = createSession(id);
 
-  users.push(newUser);
-  saveUsers(users);
-
-  console.log(`[UserManager] Created new user: ${cleanUsername} (${id})`);
-  const token = createSession(newUser);
   return {
-    user: { id, username: cleanUsername, createdAt: newUser.createdAt },
+    user: { id, username: cleanUsername, createdAt },
     token,
   };
 }
@@ -135,8 +127,7 @@ export function authenticateUser(username, password) {
     throw new Error("Username and password are required");
   }
 
-  const users = loadUsers();
-  const user = users.find((u) => u.username.toLowerCase() === cleanUsername.toLowerCase());
+  const user = findUserByUsernameStatement.get(cleanUsername);
   if (!user) {
     throw new Error("Invalid username or password");
   }
@@ -146,9 +137,9 @@ export function authenticateUser(username, password) {
     throw new Error("Invalid username or password");
   }
 
-  const token = createSession(user);
+  const token = createSession(user.id);
   return {
-    user: { id: user.id, username: user.username, createdAt: user.createdAt },
+    user: { id: user.id, username: user.username, createdAt: user.created_at },
     token,
   };
 }

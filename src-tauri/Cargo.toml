@@ -1,0 +1,23 @@
+[package]
+name = "watch-together"
+version = "1.0.0"
+description = "Watch Together Desktop App"
+edition = "2024"
+rust-version = "1.90"
+
+[lib]
+name = "watch_together_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.5", features = [] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+rfd = "0.15"
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+regex = "1.10"
