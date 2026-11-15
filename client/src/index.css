@@ -1609,3 +1609,112 @@ svg.spin {
     display: none !important;
   }
 }
+
+/* ── Custom Desktop Titlebar & Frame ──────────────────────── */
+:root {
+  --titlebar-height: 0px;
+}
+
+.desktop-app-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  width: 100%;
+  background: var(--bg-base);
+}
+
+.desktop-app-frame.is-desktop-window {
+  --titlebar-height: 34px;
+  border: 1px solid var(--border);
+}
+
+.desktop-app-frame.is-desktop-window.is-maximized {
+  border: none;
+}
+
+.desktop-app-frame.is-desktop-window .room-page-wrapper {
+  height: calc(100vh - 34px);
+  height: calc(100dvh - 34px);
+}
+
+.desktop-titlebar {
+  height: 34px;
+  min-height: 34px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 10000;
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+.desktop-titlebar-drag {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding-left: var(--sp-3);
+  gap: var(--sp-2);
+  cursor: default;
+  -webkit-app-region: drag;
+}
+
+.desktop-titlebar-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: -0.01em;
+  pointer-events: none;
+}
+
+.desktop-titlebar-controls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.desktop-titlebar-btn {
+  width: 44px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color var(--t-fast) ease, color var(--t-fast) ease;
+  outline: none;
+  -webkit-app-region: no-drag;
+}
+
+.desktop-titlebar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
+}
+
+.desktop-titlebar-btn:active {
+  background: var(--bg-accent);
+}
+
+.desktop-titlebar-btn:focus-visible {
+  outline: 1px solid var(--border-focus);
+  outline-offset: -1px;
+}
+
+.desktop-titlebar-btn.close:hover {
+  background: #e5484d;
+  color: #ffffff;
+}
+
+.desktop-titlebar-btn.close:active {
+  background: #d13b40;
+  color: #ffffff;
+}

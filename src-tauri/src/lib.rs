@@ -1,6 +1,7 @@
 pub mod subtitles;
 pub mod torrent;
 pub mod video_server;
+pub mod window_controls;
 
 use std::sync::Arc;
 use tauri::WindowEvent;
@@ -22,6 +23,10 @@ pub fn run() {
             subtitles::find_matching_subtitles,
             torrent::start_torrent,
             torrent::stop_torrent,
+            window_controls::window_minimize,
+            window_controls::window_toggle_maximize,
+            window_controls::window_close,
+            window_controls::window_is_maximized,
         ])
         .on_window_event(move |_window, event| {
             if let WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed = event {

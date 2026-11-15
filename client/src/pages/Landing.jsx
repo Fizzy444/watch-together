@@ -70,7 +70,7 @@ export default function Landing() {
           background: 'rgba(15, 17, 23, 0.85)',
           backdropFilter: 'blur(12px)',
           position: 'sticky',
-          top: 0,
+          top: 'var(--titlebar-height, 0px)',
           zIndex: 40,
         }}
       >

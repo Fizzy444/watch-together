@@ -96,6 +96,22 @@ export const desktopAPI = {
       if (unlistenFn) unlistenFn();
     };
   },
+
+  minimizeWindow: async () => {
+    return await invoke('window_minimize');
+  },
+
+  toggleMaximizeWindow: async () => {
+    return await invoke('window_toggle_maximize');
+  },
+
+  closeWindow: async () => {
+    return await invoke('window_close');
+  },
+
+  isWindowMaximized: async () => {
+    return await invoke('window_is_maximized');
+  },
 };
 
 if (typeof window !== 'undefined' && isTauri) {
