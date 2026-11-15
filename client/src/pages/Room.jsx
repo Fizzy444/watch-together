@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { getServerUrl, DEFAULT_SERVER_URL } from '../utils/serverUrl.js';
 import { useWebRTC } from '../hooks/useWebRTC.js';
 import { getRoom, getStreamStatus, closeRoom } from '../api/index.js';
 import { useWebSocket, getSessionClientId } from '../hooks/useWebSocket.js';
@@ -238,8 +239,8 @@ export default function Room() {
   }
 
   async function copyRoomLink() {
-    const serverUrl = (import.meta.env.VITE_SERVER_URL || "https://watch-together-hl8e.onrender.com").replace(/\/+$/, "");
-    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:";
+    const serverUrl = getServerUrl() || DEFAULT_SERVER_URL;
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:" || window.location.hostname === "tauri.localhost";
     const baseUrl = (isLocal && serverUrl) ? serverUrl : window.location.origin;
     const url = `${baseUrl}/watch/${roomId}`;
     try {
@@ -369,7 +370,7 @@ export default function Room() {
   }
 
   // Direct progressive streaming endpoint
-  const serverUrl = (import.meta.env.VITE_SERVER_URL || "https://watch-together-hl8e.onrender.com").replace(/\/+$/, "");
+  const serverUrl = getServerUrl() || DEFAULT_SERVER_URL;
   const videoSrc = isTunnel ? ((isHost && window.__hostLocalStreamUrl) ? window.__hostLocalStreamUrl : room.movie) : (streamReady ? `${serverUrl}/api/rooms/${roomId}/video` : null);
 
   return (

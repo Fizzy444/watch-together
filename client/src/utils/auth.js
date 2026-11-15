@@ -1,7 +1,7 @@
 import { saveProfileName } from "./profile.js";
+import { getServerUrl } from "./serverUrl.js";
 
-const DEFAULT_SERVER_URL = "https://watch-together-hl8e.onrender.com";
-const SERVER_URL = (import.meta.env.VITE_SERVER_URL || (typeof window !== "undefined" && window.location.protocol === "file:" ? DEFAULT_SERVER_URL : "")).replace(/\/+$/, "");
+const SERVER_URL = getServerUrl();
 
 const TOKEN_KEY = "wt_auth_token";
 const USER_KEY = "wt_auth_user";
