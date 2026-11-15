@@ -16,7 +16,7 @@ function formatBytes(bytes, decimals = 1) {
 export default function CreateRoomModal({ isOpen, onClose }) {
   const navigate = useNavigate();
   const [roomName, setRoomName] = useState("");
-  const isElectron = Boolean(window.electronAPI);
+  const isElectron = Boolean(window.desktopAPI || window.electronAPI);
   const [inputType, setInputType] = useState("tunnel");
   
   const [selectedFile, setSelectedFile] = useState(null); // { name, size, filePath }
@@ -392,7 +392,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                     >
                       <ShieldCheck size={16} style={{ flexShrink: 0, marginTop: 2 }} />
                       <span>
-                        <strong>1-Click Automated Streaming:</strong> Electron starts a local HTTP range server and connects a secure Cloudflare Quick Tunnel automatically. No port forwarding or setup required.
+                        <strong>1-Click Automated Streaming:</strong> Starts a local HTTP range server and connects a secure Cloudflare Quick Tunnel automatically. No port forwarding or setup required.
                       </span>
                     </div>
                   </>
