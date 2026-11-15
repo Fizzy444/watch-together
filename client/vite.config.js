@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const wsTarget = targetServer.replace(/^http/, 'ws');
 
   return {
-    base: './',
+    base: '/',
     plugins: [react()],
     server: {
       port: 5173,
