@@ -9,6 +9,9 @@ export default defineConfig(({ mode }) => {
   return {
     base: '/',
     plugins: [react()],
+    build: {
+      sourcemap: false,
+    },
     server: {
       port: 5173,
       proxy: {

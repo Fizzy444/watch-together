@@ -4,25 +4,95 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag or version (e.g. v1.0.0)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  create-draft-release:
+    name: 1. Create Release Draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.create_draft.outputs.release_id }}
+      tag_name: ${{ steps.parse_version.outputs.tag_name }}
+      version: ${{ steps.parse_version.outputs.version }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Parse Version from Tag
+        id: parse_version
+        run: |
+          RAW_TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
+          CLEAN_VERSION="${RAW_TAG#v}"
+          echo "tag_name=$RAW_TAG" >> $GITHUB_OUTPUT
+          echo "version=$CLEAN_VERSION" >> $GITHUB_OUTPUT
+          echo "Processing tag: $RAW_TAG (version: $CLEAN_VERSION)"
+
+      - name: Create GitHub Release Draft
+        id: create_draft
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ steps.parse_version.outputs.tag_name }}';
+            let releaseId;
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: tag,
+              });
+              releaseId = existing.data.id;
+              console.log(`Found existing release by tag: ${releaseId}`);
+            } catch (err) {
+              const releases = await github.rest.repos.listReleases({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              });
+              const draft = releases.data.find(r => r.tag_name === tag && r.draft);
+              if (draft) {
+                releaseId = draft.id;
+                console.log(`Found existing draft release: ${releaseId}`);
+              } else {
+                const created = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: tag,
+                  name: `Watch Together ${tag}`,
+                  body: `### Watch Together ${tag}\n\nAutomated desktop app build. Please review assets and publish the release.`,
+                  draft: true,
+                  prerelease: false,
+                  generate_release_notes: true,
+                });
+                releaseId = created.data.id;
+                console.log(`Created release draft with ID: ${releaseId}`);
+              }
+            }
+            core.setOutput('release_id', releaseId);
+
+  build-desktop-app:
+    name: 2. Build App and Attach to Draft (${{ matrix.platform }})
+    needs: create-draft-release
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
+          - platform: 'windows-latest'
+            args: ''
           - platform: 'macos-latest'
             args: '--target universal-apple-darwin'
           - platform: 'ubuntu-22.04'
             args: ''
-          - platform: 'windows-latest'
-            args: ''
-
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout Code
@@ -33,12 +103,19 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
-          cache-dependency-path: client/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
 
-      - name: Install Rust
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || (matrix.platform == 'windows-latest' && 'x86_64-pc-windows-msvc' || '') }}
+
+      - name: Cache Rust Dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
 
       - name: Install Linux Dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -46,18 +123,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      - name: Install Root Dependencies
+        run: npm ci
+
+      - name: Sync App Version from Tag
+        run: node .github/scripts/sync-version.js "${{ needs.create-draft-release.outputs.tag_name }}"
+
       - name: Install Client Dependencies
         working-directory: client
         run: npm ci
 
-      - name: Build Desktop App
+      - name: Build Desktop App and Attach to Draft Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Watch Together ${{ github.ref_name }}'
-          releaseBody: 'Automated multi-platform release powered by Rust and Tauri v2.'
+          releaseId: ${{ needs.create-draft-release.outputs.release_id }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Upload Windows Artifact Backup
+        if: matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: watch-together-windows-x64-${{ needs.create-draft-release.outputs.version }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: warn
+          retention-days: 14

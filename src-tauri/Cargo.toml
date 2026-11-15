@@ -21,3 +21,11 @@ rfd = "0.15"
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 regex = "1.10"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
