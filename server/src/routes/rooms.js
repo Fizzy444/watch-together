@@ -44,7 +44,7 @@ router.post('/', async (req, res) => {
 
   if (streamType === 'tunnel' || (movie && (movie.startsWith('http://') || movie.startsWith('https://')))) {
     const movieTitle = name || 'Host Cloudflare Stream';
-    const room = createRoom(movie, movieTitle, name, clientId, 'tunnel');
+    const room = createRoom(movie, movieTitle, name, clientId, 'tunnel', req.body.duration);
     return res.json({
       roomId: room.id,
       url: `/watch/${room.id}`,

@@ -608,6 +608,8 @@ export default function Room() {
               initialPlaying={room?.playing || false}
               wasPlayingBeforeDisconnect={Boolean(room?.wasPlayingBeforeHostDisconnect || room?.hostDisconnected)}
               videoPath={window.__hostFilePath || null}
+              knownDuration={window.__hostMovieDuration || room?.movieDuration || null}
+              isLivePipe={window.__hostIsLivePipe ?? null}
               onPlay={handlePlay}
               onPause={handlePause}
               onSeek={handleSeek}

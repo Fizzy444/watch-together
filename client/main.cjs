@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const os = require('os');
+const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const util = require('util');
 const execFileAsync = util.promisify(execFile);
@@ -364,16 +365,23 @@ let hostVideoServer = null;
 let hostCloudflareTunnel = null;
 let hostFfmpegProcess = null;
 let currentHostVideoPath = null;
+let currentRemuxTempPath = null;
 
 function cleanupHostTunnel() {
   if (hostFfmpegProcess) {
     try {
-      console.log('[Host Stream] Terminating ffmpeg transcode process...');
+      console.log('[Host Stream] Terminating ffmpeg process...');
       hostFfmpegProcess.kill('SIGKILL');
     } catch (e) {
       console.error('Error killing ffmpeg:', e);
     }
     hostFfmpegProcess = null;
+  }
+  if (currentRemuxTempPath && fs.existsSync(currentRemuxTempPath)) {
+    try {
+      fs.unlinkSync(currentRemuxTempPath);
+    } catch {}
+    currentRemuxTempPath = null;
   }
   if (hostCloudflareTunnel) {
     try {
@@ -413,6 +421,11 @@ async function probeVideoFile(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     const isMkv = ext === '.mkv';
     const duration = parseFloat(parsed.format?.duration) || 0;
+    const videoCodec = videoStreams[0]?.codec_name?.toLowerCase() || null;
+
+    // Supported browser direct video codecs: H.264 (avc1), VP9, AV1
+    const BROWSER_DIRECT_VIDEO_CODECS = ['h264', 'avc1', 'vp9', 'av1'];
+    const needsVideoTranscode = videoCodec ? !BROWSER_DIRECT_VIDEO_CODECS.includes(videoCodec) : false;
 
     return {
       duration,
@@ -420,7 +433,8 @@ async function probeVideoFile(filePath) {
       audioCodec: audioStreams[0]?.codec_name || null,
       needsAudioTranscode: hasUnsupportedAudio,
       isMkv,
-      videoCodec: videoStreams[0]?.codec_name || null,
+      videoCodec,
+      needsVideoTranscode,
     };
   } catch (err) {
     console.warn('[Host Stream] ffprobe error, falling back to direct stream:', err.message);
@@ -482,86 +496,157 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
   const probe = await probeVideoFile(filePath);
   console.log('[Host Stream] Probe results for', fileName, ':', probe);
 
-  // If container is MKV or audio is unsupported (AC-3, DTS, TrueHD, EAC3), remux to fast MP4 with stereo AAC
-  const needsRemux = probe.needsAudioTranscode || probe.isMkv || ext !== '.mp4';
-  let activeServePath = filePath;
+function streamDirectFile(filePath, fileSize, req, res) {
+  const CHUNK_SIZE = 32 * 1024 * 1024;
+  const contentType = 'video/mp4';
+  const rangeHeader = req.headers.range;
 
-  if (needsRemux) {
-    const cacheDir = path.join(app.getPath('temp'), 'wt-cache');
-    if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-
-    const safeBase = path.basename(filePath, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
-    const cacheKey = `${stat.size}-${Math.floor(stat.mtimeMs)}`;
-    const remuxedPath = path.join(cacheDir, `${safeBase}-${cacheKey}.mp4`);
-
-    if (fs.existsSync(remuxedPath) && fs.statSync(remuxedPath).size > 1024) {
-      console.log('[Host Stream] Reusing existing optimized MP4 from cache:', remuxedPath);
-      event.sender.send('host-tunnel-status', { step: 'cache-hit', message: 'Ready! Loaded optimized video from cache.', progress: 100 });
-      activeServePath = remuxedPath;
+  if (req.method === 'HEAD') {
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      if (end >= fileSize) end = fileSize - 1;
+      const chunkSize = end - start + 1;
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=3600',
+      });
     } else {
-      event.sender.send('host-tunnel-status', { step: 'remuxing', message: 'Optimizing video & audio for playback (0%)...', progress: 0 });
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Accept-Ranges': 'bytes',
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=3600',
+      });
+    }
+    return res.end();
+  }
 
-      const duration = probe.duration || 0;
+  if (rangeHeader) {
+    const parts = rangeHeader.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    let end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + CHUNK_SIZE - 1, fileSize - 1);
+    if (end >= fileSize) end = fileSize - 1;
+
+    if (start >= fileSize) {
+      res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+      return res.end();
+    }
+
+    const chunkSize = end - start + 1;
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=3600',
+    });
+
+    const fileStream = fs.createReadStream(filePath, { start, end });
+    res.on('close', () => fileStream.destroy());
+    fileStream.pipe(res);
+    return;
+  }
+
+  res.writeHead(200, {
+    'Content-Length': fileSize,
+    'Accept-Ranges': 'bytes',
+    'Content-Type': contentType,
+    'Cache-Control': 'public, max-age=3600',
+  });
+  const fileStream = fs.createReadStream(filePath);
+  res.on('close', () => fileStream.destroy());
+  fileStream.pipe(res);
+}
+
+  const needsTransmux = probe.needsAudioTranscode || probe.isMkv || ext !== '.mp4' || probe.needsVideoTranscode;
+  const duration = probe.duration || 0;
+
+  const cacheDir = path.join(app.getPath('userData'), 'wt-cache');
+  try { fs.mkdirSync(cacheDir, { recursive: true }); } catch {}
+  const fileHash = crypto.createHash('md5').update(`${filePath}-${stat.size}-${stat.mtimeMs}`).digest('hex');
+  const cachedMp4Path = path.join(cacheDir, `${fileHash}.mp4`);
+  const cachedMp4Tmp = path.join(cacheDir, `${fileHash}.tmp.mp4`);
+
+  let targetFilePath = filePath;
+  let targetFileSize = stat.size;
+
+  if (needsTransmux) {
+    if (fs.existsSync(cachedMp4Path)) {
+      console.log('[Host Stream] Using existing cached faststart MP4:', cachedMp4Path);
+      targetFilePath = cachedMp4Path;
+      targetFileSize = fs.statSync(cachedMp4Path).size;
+    } else {
+      event.sender.send('host-tunnel-status', { step: 'transcoding', message: 'Optimizing video for streaming (0%)...', progress: 0 });
+      currentRemuxTempPath = cachedMp4Tmp;
+
+      const videoArgs = probe.needsVideoTranscode
+        ? ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '22']
+        : ['-c:v', 'copy'];
+
       const ffmpegArgs = [
         '-y',
         '-i', filePath,
         '-map', '0:v:0',
         '-map', '0:a:0?',
-        '-c:v', 'copy',
+        ...videoArgs,
         '-c:a', 'aac',
         '-b:a', '192k',
         '-ac', '2',
         '-movflags', '+faststart',
-        remuxedPath,
+        cachedMp4Tmp,
       ];
 
-      console.log('[Host Stream] Starting fast MP4 remux:', ffmpegArgs.join(' '));
+      console.log('[Host Stream] Remuxing to faststart MP4:', ffmpegArgs.join(' '));
+      const ffProcess = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
+      hostFfmpegProcess = ffProcess;
 
-      await new Promise((resolve, reject) => {
-        const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
-        hostFfmpegProcess = proc;
-
-        proc.stderr.on('data', (data) => {
-          const str = data.toString();
-          const match = str.match(/time=(\d+):(\d+):(\d+\.\d+)/);
-          if (match && duration > 0) {
-            const currentSec = parseInt(match[1], 10) * 3600 + parseInt(match[2], 10) * 60 + parseFloat(match[3]);
-            const pct = Math.min(99, Math.round((currentSec / duration) * 100));
-            event.sender.send('host-tunnel-status', {
-              step: 'remuxing',
-              message: `Optimizing audio track & container (${pct}%)...`,
-              progress: pct,
-            });
-          }
-        });
-
-        proc.on('error', (err) => {
-          console.error('[FFmpeg Remux Error]', err);
-          hostFfmpegProcess = null;
-          reject(err);
-        });
-
-        proc.on('exit', (code) => {
-          hostFfmpegProcess = null;
-          if (code === 0 && fs.existsSync(remuxedPath)) {
-            console.log('[Host Stream] MP4 remux complete! Output size:', fs.statSync(remuxedPath).size);
-            resolve();
-          } else {
-            console.warn('[Host Stream] Remux exited with code', code, ', falling back to original file');
-            resolve();
-          }
-        });
+      ffProcess.stderr.on('data', (data) => {
+        const text = data.toString();
+        const match = text.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d+)/);
+        if (match && duration > 0) {
+          const curSec = parseInt(match[1], 10) * 3600 + parseInt(match[2], 10) * 60 + parseFloat(match[3]);
+          const percent = Math.min(99, Math.round((curSec / duration) * 100));
+          event.sender.send('host-tunnel-status', {
+            step: 'transcoding',
+            message: `Optimizing video for streaming (${percent}%)...`,
+            progress: percent,
+          });
+        }
       });
 
-      if (fs.existsSync(remuxedPath) && fs.statSync(remuxedPath).size > 1024) {
-        activeServePath = remuxedPath;
-      }
+      await new Promise((resolveRemux) => {
+        ffProcess.on('exit', (code) => {
+          hostFfmpegProcess = null;
+          currentRemuxTempPath = null;
+          if (code === 0 && fs.existsSync(cachedMp4Tmp)) {
+            try {
+              fs.renameSync(cachedMp4Tmp, cachedMp4Path);
+              targetFilePath = cachedMp4Path;
+              targetFileSize = fs.statSync(cachedMp4Path).size;
+              console.log('[Host Stream] Remux complete. Size:', targetFileSize);
+            } catch (err) {
+              console.warn('[Host Stream] Error renaming temp remux:', err);
+            }
+          } else {
+            console.warn(`[Host Stream] Remux exited with code ${code}, falling back to original file.`);
+          }
+          resolveRemux();
+        });
+
+        ffProcess.on('error', (err) => {
+          hostFfmpegProcess = null;
+          currentRemuxTempPath = null;
+          console.error('[Host Stream] Remux spawn error:', err);
+          resolveRemux();
+        });
+      });
     }
   }
-
-  const serveStat = fs.statSync(activeServePath);
-  const serveFileSize = serveStat.size;
-  const contentType = 'video/mp4';
 
   return new Promise((resolve, reject) => {
     event.sender.send('host-tunnel-status', { step: 'starting-server', message: 'Starting local video streaming server...' });
@@ -576,74 +661,20 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
         return res.end();
       }
 
-      if (req.url === '/health') {
+      const requestUrl = new URL(req.url, 'http://127.0.0.1');
+
+      if (requestUrl.pathname === '/health' || requestUrl.pathname === '/info') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ status: 'ok', file: fileName, size: serveFileSize }));
+        return res.end(JSON.stringify({
+          status: 'ok',
+          file: fileName,
+          size: targetFileSize,
+          duration,
+          isHls: false,
+        }));
       }
 
-      const range = req.headers.range;
-      const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB chunks optimal for Cloudflare Tunnel
-
-      if (req.method === 'HEAD') {
-        if (range) {
-          const parts = range.replace(/bytes=/, '').split('-');
-          const start = parseInt(parts[0], 10);
-          let end = parts[1] ? parseInt(parts[1], 10) : start + CHUNK_SIZE - 1;
-          if (end >= serveFileSize) end = serveFileSize - 1;
-          const chunksize = end - start + 1;
-          res.writeHead(206, {
-            'Content-Range': `bytes ${start}-${end}/${serveFileSize}`,
-            'Accept-Ranges': 'bytes',
-            'Content-Length': chunksize,
-            'Content-Type': contentType,
-            'Cache-Control': 'public, max-age=3600',
-          });
-        } else {
-          res.writeHead(200, {
-            'Content-Length': serveFileSize,
-            'Accept-Ranges': 'bytes',
-            'Content-Type': contentType,
-            'Cache-Control': 'public, max-age=3600',
-          });
-        }
-        return res.end();
-      }
-
-      if (range) {
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        let end = parts[1] ? parseInt(parts[1], 10) : start + CHUNK_SIZE - 1;
-        if (end - start + 1 > CHUNK_SIZE) end = start + CHUNK_SIZE - 1;
-        if (end >= serveFileSize) end = serveFileSize - 1;
-
-        if (start >= serveFileSize) {
-          res.writeHead(416, { 'Content-Range': `bytes */${serveFileSize}` });
-          return res.end();
-        }
-
-        const chunksize = end - start + 1;
-        res.writeHead(206, {
-          'Content-Range': `bytes ${start}-${end}/${serveFileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunksize,
-          'Content-Type': contentType,
-          'Cache-Control': 'public, max-age=3600',
-        });
-
-        const stream = fs.createReadStream(activeServePath, { start, end });
-        res.on('close', () => stream.destroy());
-        stream.pipe(res);
-      } else {
-        res.writeHead(200, {
-          'Content-Length': serveFileSize,
-          'Accept-Ranges': 'bytes',
-          'Content-Type': contentType,
-          'Cache-Control': 'public, max-age=3600',
-        });
-        const stream = fs.createReadStream(activeServePath);
-        res.on('close', () => stream.destroy());
-        stream.pipe(res);
-      }
+      streamDirectFile(targetFilePath, targetFileSize, req, res);
     });
 
     hostVideoServer.listen(0, '127.0.0.1', () => {
@@ -671,7 +702,9 @@ ipcMain.handle('start-host-tunnel', async (event, filePath) => {
             localStreamUrl,
             tunnelUrl,
             fileName,
-            fileSize: serveFileSize,
+            fileSize: targetFileSize,
+            duration,
+            isHls: false,
           });
         });
 

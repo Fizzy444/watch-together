@@ -134,6 +134,8 @@ export default function CreateRoomModal({ isOpen, onClose }) {
               window.__hostLocalStreamUrl = tunnelRes.localStreamUrl;
             }
             window.__hostFilePath = selectedFile.filePath;
+            window.__hostMovieDuration = tunnelRes.duration || 0;
+            window.__hostIsLivePipe = Boolean(tunnelRes.isLivePipe);
             finalMovieName = (selectedFile?.name || selectedFile?.fileName || "").replace(/\.[^/.]+$/, "");
           } finally {
             unsubscribe?.();
@@ -149,6 +151,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
           movie: streamUrl,
           name: finalTitle,
           clientId,
+          duration: window.__hostMovieDuration || 0,
         });
 
         onClose();

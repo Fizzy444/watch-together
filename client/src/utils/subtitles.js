@@ -8,49 +8,55 @@
  * @param {string} srtText
  * @returns {string} WebVTT formatted text
  */
-export function srtToVtt(srtText) {
+function shiftTimestamp(timestampString, offsetSeconds) {
+  const parts = timestampString.split(':');
+  let seconds = 0;
+  if (parts.length === 3) {
+    seconds = parseInt(parts[0], 10) * 3600 + parseInt(parts[1], 10) * 60 + parseFloat(parts[2]);
+  } else if (parts.length === 2) {
+    seconds = parseInt(parts[0], 10) * 60 + parseFloat(parts[1]);
+  }
+  const shifted = Math.max(0, seconds - offsetSeconds);
+  const hours = Math.floor(shifted / 3600);
+  const minutes = Math.floor((shifted % 3600) / 60);
+  const secs = (shifted % 60).toFixed(3);
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${secs.padStart(6, '0')}`;
+}
+
+export function srtToVtt(srtText, offsetSeconds = 0) {
   if (!srtText || typeof srtText !== 'string') return 'WEBVTT\n\n';
 
-  // Normalize line breaks
   let text = srtText.replace(/\r\n|\r/g, '\n').trim();
-
-  // If already WebVTT, return as-is
-  if (text.startsWith('WEBVTT')) {
-    return text;
-  }
-
-  // Remove byte order mark (BOM) if present
   text = text.replace(/^\uFEFF/, '');
 
-  // Convert SRT comma decimals to WebVTT period decimals in timestamps
-  // Matches: 00:00:00,000 --> 00:00:00,000
+  if (text.startsWith('WEBVTT')) {
+    text = text.replace(/^WEBVTT[^\n]*\n+/, '');
+  }
+
   text = text.replace(
     /(\d{2}:\d{2}:\d{2}),(\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}),(\d{3})/g,
     '$1.$2 --> $3.$4'
   );
 
-  // Also handle 2-part timestamps (e.g. 00:00,000 --> 00:00,000)
   text = text.replace(
     /(?:^|\n)(\d{2}:\d{2}),(\d{3})\s*-->\s*(\d{2}:\d{2}),(\d{3})/g,
     '\n00:$1.$2 --> 00:$3.$4'
   );
 
-  // Strip unneeded legacy font tags
+  if (offsetSeconds !== 0) {
+    text = text.replace(
+      /(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})/g,
+      (_match, startStr, endStr) => `${shiftTimestamp(startStr, offsetSeconds)} --> ${shiftTimestamp(endStr, offsetSeconds)}`
+    );
+  }
+
   text = text.replace(/<font[^>]*>/gi, '').replace(/<\/font>/gi, '');
 
   return `WEBVTT\n\n${text}\n`;
 }
 
-/**
- * Creates a Blob URL for a subtitle file (.srt or .vtt).
- * @param {string} content Subtitle text
- * @param {string} format 'srt' | 'vtt'
- * @returns {string} Object URL pointing to text/vtt
- */
-export function createVttBlobUrl(content, format = 'vtt') {
-  const vttContent = format.toLowerCase() === 'srt' || !content.trim().startsWith('WEBVTT')
-    ? srtToVtt(content)
-    : content;
+export function createVttBlobUrl(content, format = 'vtt', offsetSeconds = 0) {
+  const vttContent = srtToVtt(content, offsetSeconds);
   const blob = new Blob([vttContent], { type: 'text/vtt;charset=utf-8' });
   return URL.createObjectURL(blob);
 }
