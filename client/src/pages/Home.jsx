@@ -190,10 +190,24 @@ export default function Home() {
         {/* Header Right Actions: Profile / Auth + Create Room */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
           {currentUser ? (
-            <ProfileBadge name={currentUser.username} />
+            <ProfileBadge
+              name={currentUser.username}
+              onSignOut={() => {
+                setCurrentUser(null);
+                navigate('/');
+              }}
+            />
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-              {profileName && <ProfileBadge name={profileName} />}
+              {profileName && (
+                <ProfileBadge
+                  name={profileName}
+                  onSignOut={() => {
+                    setProfileName('');
+                    navigate('/');
+                  }}
+                />
+              )}
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => {

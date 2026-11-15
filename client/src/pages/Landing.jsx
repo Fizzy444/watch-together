@@ -29,6 +29,13 @@ export default function Landing() {
   const [authModalMode, setAuthModalMode] = useState('signin');
   const [roomCodeInput, setRoomCodeInput] = useState('');
 
+  // Automatically redirect logged-in users directly to the dashboard
+  useEffect(() => {
+    if (currentUser) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [currentUser, navigate]);
+
   // Listen for auth changes across tabs/components
   useEffect(() => {
     const handleAuthChange = (e) => {
@@ -55,6 +62,10 @@ export default function Landing() {
     if (clean) {
       navigate(`/watch/${clean}`);
     }
+  }
+
+  if (currentUser) {
+    return null;
   }
 
   return (
