@@ -149,7 +149,6 @@ export default function CreateRoomModal({ isOpen, onClose }) {
             }
             window.__hostFilePath = selectedFile.filePath;
             window.__hostMovieDuration = tunnelRes.duration || 0;
-            window.__hostIsLivePipe = false;
             window.__hostStreamMode = streamMode;
             window.__hostIsHls = Boolean(tunnelRes.isHls);
             finalMovieName = (selectedFile?.name || selectedFile?.fileName || "").replace(/\.[^/.]+$/, "");

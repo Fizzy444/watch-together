@@ -1,3 +1,4 @@
+pub mod mp4;
 pub mod subtitles;
 pub mod torrent;
 pub mod video_server;

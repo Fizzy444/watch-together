@@ -34,6 +34,12 @@ import {
   Play,
 } from 'lucide-react';
 
+function pushToast(setToasts, msg, type = 'info') {
+  const id = Date.now() + Math.random();
+  setToasts((prev) => [...prev, { id, msg, type }]);
+  setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
+}
+
 export default function Room() {
   const { roomId } = useParams();
   const navigate = useNavigate();
@@ -62,6 +68,8 @@ export default function Room() {
   const [myUserId] = useState(getSessionClientId);
 
   const [streamReady, setStreamReady] = useState(false);
+  const [hostLocalStreamUrl, setHostLocalStreamUrl] = useState(() => window.__hostLocalStreamUrl || null);
+  const [hostSubtitleUrl] = useState(() => window.__hostSubtitleUrl || null);
   const [error, setError] = useState('');
     const [toasts, setToasts] = useState([]);
   const pollRef = useRef(null);
@@ -190,7 +198,18 @@ export default function Room() {
   useEffect(() => {
     return () => {
       window.electronAPI?.stopHostTunnel?.();
+      window.__hostLocalStreamUrl = null;
+      window.__hostSubtitleUrl = null;
     };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.desktopAPI?.onTunnelStatus?.((status) => {
+      if (status?.step === 'error' && status.message) {
+        pushToast(setToasts, status.message, 'error');
+      }
+    });
+    return () => unsubscribe?.();
   }, []);
 
   useEffect(() => {
@@ -212,9 +231,14 @@ export default function Room() {
   }, [roomId, streamReady, isP2P, isTorrent, isTunnel]);
 
   function addToast(msg, type = 'info') {
-    const id = Date.now() + Math.random();
-    setToasts((prev) => [...prev, { id, msg, type }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
+    pushToast(setToasts, msg, type);
+  }
+
+  function handleVideoPlaybackError(error, failedSrc) {
+    if (!isHost || !isTunnel || !hostLocalStreamUrl || failedSrc !== hostLocalStreamUrl) return;
+    setHostLocalStreamUrl(null);
+    window.__hostLocalStreamUrl = null;
+    addToast('Local stream failed; switched to the tunnel URL.', 'info');
   }
 
   // Auto-redirect if room was closed
@@ -461,7 +485,7 @@ export default function Room() {
 
   // Direct progressive streaming endpoint
   const serverUrl = getServerUrl() || DEFAULT_SERVER_URL;
-  const videoSrc = isTunnel ? ((isHost && window.__hostLocalStreamUrl) ? window.__hostLocalStreamUrl : room.movie) : (streamReady ? `${serverUrl}/api/rooms/${roomId}/video` : null);
+  const videoSrc = isTunnel ? ((isHost && hostLocalStreamUrl) ? hostLocalStreamUrl : room.movie) : (streamReady ? `${serverUrl}/api/rooms/${roomId}/video` : null);
 
   return (
     <div className="room-page-wrapper">
@@ -690,7 +714,8 @@ export default function Room() {
             <VideoPlayer
               ref={videoPlayerRef}
               src={videoSrc}
-              subtitleUrl={window.__hostSubtitleUrl || room?.subtitleUrl || null}
+              subtitleUrl={hostSubtitleUrl || room?.subtitleUrl || null}
+              onPlaybackError={handleVideoPlaybackError}
               streamObject={isP2P && !isHost ? remoteStream : null}
               isP2P={isP2P}
               isTorrent={isTorrent}
@@ -703,7 +728,6 @@ export default function Room() {
               wasPlayingBeforeDisconnect={Boolean(room?.wasPlayingBeforeHostDisconnect || room?.hostDisconnected)}
               videoPath={window.__hostFilePath || null}
               knownDuration={window.__hostMovieDuration || room?.movieDuration || null}
-              isLivePipe={window.__hostIsLivePipe ?? null}
               onPlay={handlePlay}
               onPause={handlePause}
               onSeek={handleSeek}

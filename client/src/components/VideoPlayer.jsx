@@ -31,12 +31,33 @@ function formatTime(s) {
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
+function describePlaybackError(error, source, isHost) {
+  if (!error) return 'The video could not be loaded.';
+  switch (error.code) {
+    case 1:
+      return 'Playback was aborted while loading the video.';
+    case 2:
+      return 'Network error: Could not reach the video stream server.';
+    case 3:
+      return 'Video decode error: The stream was corrupted or could not be decoded.';
+    case 4:
+      if (source?.includes('.m3u8')) {
+        return 'HLS playlist could not be loaded. Check the tunnel connection and try again.';
+      }
+      return isHost
+        ? 'Format unsupported: This MP4 cannot be decoded natively. Restart the stream in HLS mode.'
+        : 'Format unsupported: Ask the host to restart the stream in HLS mode.';
+    default:
+      return error.message || 'The video could not be loaded.';
+  }
+}
+
 const VideoPlayer = forwardRef(function VideoPlayer({
   src,
   videoPath = null,
   subtitleUrl = null,
   knownDuration = null,
-  isLivePipe = null,
+  onPlaybackError = null,
   streamObject = null,
   isP2P = false,
   p2pStatus = null,
@@ -54,17 +75,19 @@ const VideoPlayer = forwardRef(function VideoPlayer({
 }, ref) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
+  const onPlaybackErrorRef = useRef(onPlaybackError);
   const isHostRef = useRef(isHost);
   isHostRef.current = isHost;
-  const sessionIdRef = useRef('client-' + Math.random().toString(36).substring(2, 9));
-  const streamOffsetRef = useRef(0);
+  useEffect(() => {
+    onPlaybackErrorRef.current = onPlaybackError;
+  }, [onPlaybackError]);
   const activeSubtitleTrackRef = useRef(null);
   const isHlsSource = Boolean(src && src.includes('.m3u8'));
-  const isLivePipeStream = false;
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackError, setPlaybackError] = useState("");
+  const [retryToken, setRetryToken] = useState(0);
 
   const effectiveDuration = (knownDuration && isFinite(knownDuration) && knownDuration > 0)
     ? knownDuration
@@ -392,19 +415,6 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     trackEl.track.mode = 'showing';
   }, []);
 
-  const reloadLiveStreamAt = useCallback((targetTime, shouldPlay = true) => {
-    const video = videoRef.current;
-    if (!video || !src) return;
-    video.currentTime = targetTime;
-    setCurrentTime(targetTime);
-    if (shouldPlay) {
-      video.play().catch(() => {});
-    }
-    if (activeSubtitleTrackRef.current) {
-      applySubtitleTrack(activeSubtitleTrackRef.current, targetTime);
-    }
-  }, [src, applySubtitleTrack]);
-
   useEffect(() => {
     if (knownDuration && isFinite(knownDuration) && knownDuration > 0) {
       setDuration(knownDuration);
@@ -445,6 +455,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         setBuffering(false);
+        setPlaybackError("");
       });
       hls.on(Hls.Events.ERROR, (event, data) => {
         console.warn('[HLS]', data.type, data.details);
@@ -457,6 +468,8 @@ const VideoPlayer = forwardRef(function VideoPlayer({
               hls.recoverMediaError();
               break;
             default:
+              setPlaybackError(`HLS stream error: ${data.details || 'unknown error'}`);
+              onPlaybackErrorRef.current?.(data, src);
               hls.destroy();
               break;
           }
@@ -478,7 +491,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         hlsRef.current = null;
       }
     };
-  }, [src]);
+  }, [src, retryToken]);
 
   // Refresh embedded subtitles from HTML5 video element
   const refreshEmbeddedTracks = useCallback(() => {
@@ -1001,9 +1014,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       return;
     }
 
-    const currentAbsolute = isLivePipeStream
-      ? streamOffsetRef.current + video.currentTime
-      : video.currentTime;
+    const currentAbsolute = video.currentTime;
 
     if (video.paused) {
       video.play().catch((err) => console.error('[Play failed]', err));
@@ -1014,7 +1025,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       onPause?.(currentAbsolute);
       showHud({ icon: 'pause', text: 'Pause' });
     }
-  }, [onPlay, onPause, showHud, autoplayMuted, isLivePipeStream]);
+  }, [onPlay, onPause, showHud, autoplayMuted]);
 
   // Skip relative seconds (+5, -5, +10, -10, etc.)
   const handleSkip = useCallback(
@@ -1197,21 +1208,15 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         preload="metadata"
         onClick={handlePlayPause}
         onError={(e) => {
-          const code = e.target?.error?.code;
-          const message = e.target?.error?.message;
-          console.warn("[VideoPlayer] Video element error event:", code, message);
+          const error = e.target?.error;
+          console.warn("[VideoPlayer] Video element error event:", error?.code, error?.message);
           if (isTorrent && torrentSrcSetRef.current) {
-            if (code === 4 || code === 3) {
+            if (error?.code === 4 || error?.code === 3) {
               setTorrentError("Video decoding error: The video format inside this torrent cannot be played by the HTML5 video engine.");
             }
           } else if (src) {
-            if (code === 4) {
-              setPlaybackError("Format unsupported: The video container or codec cannot be decoded natively by this browser. Consider HLS mode.");
-            } else if (code === 3) {
-              setPlaybackError("Video decode error: The stream was corrupted or could not be decoded.");
-            } else if (code === 2) {
-              setPlaybackError("Network error: Could not reach video stream server.");
-            }
+            setPlaybackError(describePlaybackError(error, src, isHost));
+            onPlaybackError?.(error, src);
           }
         }}
         style={{
@@ -1351,10 +1356,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
             style={{ fontSize: "0.8125rem", color: "var(--text-2)" }}
             onClick={() => {
               setPlaybackError("");
-              if (videoRef.current && src) {
-                videoRef.current.src = src;
-                videoRef.current.load();
-              }
+              setRetryToken((token) => token + 1);
             }}
           >
             Retry Playback

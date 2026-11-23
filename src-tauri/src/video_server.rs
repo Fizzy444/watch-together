@@ -1,3 +1,10 @@
+use axum::body::Body;
+use axum::extract::Request;
+use axum::http::header::{
+    ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderName, HeaderValue,
+};
+use axum::http::{Method, Response};
+use axum::middleware::Next;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -46,6 +53,7 @@ pub struct ActiveTunnelState {
     pub current_temp_remux: Option<PathBuf>,
     pub hls_dir: Option<PathBuf>,
     pub stream_mode: Option<String>,
+    pub needs_video_transcode: bool,
 }
 
 pub type SharedTunnelState = Arc<Mutex<ActiveTunnelState>>;
@@ -172,6 +180,28 @@ fn resolve_cloudflared_binary() -> PathBuf {
     PathBuf::from(if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" })
 }
 
+async fn allow_private_network(request: Request<Body>, next: Next) -> Response<Body> {
+    let needs_private_network_header = request.method() == Method::OPTIONS
+        || request
+            .headers()
+            .get(HeaderName::from_static(
+                "access-control-request-private-network",
+            ))
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+
+    let mut response = next.run(request).await;
+
+    if needs_private_network_header {
+        response.headers_mut().insert(
+            HeaderName::from_static("access-control-allow-private-network"),
+            HeaderValue::from_static("true"),
+        );
+    }
+
+    response
+}
+
 #[tauri::command]
 pub async fn select_video_file() -> Result<Option<VideoFileInfo>, String> {
     let handle = rfd::AsyncFileDialog::new()
@@ -209,6 +239,7 @@ pub async fn cleanup_tunnel(state: &SharedTunnelState) {
 
     if let Some(mut child) = guard.ffmpeg_child.take() {
         let _ = child.kill().await;
+        let _ = child.wait().await;
     }
 
     if let Some(temp_path) = guard.current_temp_remux.take() {
@@ -221,6 +252,7 @@ pub async fn cleanup_tunnel(state: &SharedTunnelState) {
 
     if let Some(mut child) = guard.cloudflared_child.take() {
         let _ = child.kill().await;
+        let _ = child.wait().await;
     }
 
     if let Some(shutdown) = guard.server_shutdown.take() {
@@ -229,6 +261,7 @@ pub async fn cleanup_tunnel(state: &SharedTunnelState) {
 
     guard.current_video_path = None;
     guard.stream_mode = None;
+    guard.needs_video_transcode = false;
 }
 
 #[tauri::command]
@@ -250,6 +283,8 @@ fn spawn_hls_ffmpeg(
 
     let mut args = vec![
         "-y".to_string(),
+        "-fflags".to_string(),
+        "+genpts".to_string(),
         "-ss".to_string(),
         format!("{:.3}", start_seconds),
         "-i".to_string(),
@@ -280,11 +315,19 @@ fn spawn_hls_ffmpeg(
         "192k".to_string(),
         "-ac".to_string(),
         "2".to_string(),
+        "-avoid_negative_ts".to_string(),
+        "make_zero".to_string(),
         "-f".to_string(),
         "hls".to_string(),
         "-hls_time".to_string(),
         "4".to_string(),
         "-hls_list_size".to_string(),
+        "0".to_string(),
+        "-hls_flags".to_string(),
+        "independent_segments".to_string(),
+        "-hls_segment_type".to_string(),
+        "mpegts".to_string(),
+        "-start_number".to_string(),
         "0".to_string(),
         "-hls_segment_filename".to_string(),
         segment_pattern,
@@ -313,9 +356,11 @@ pub async fn seek_hls_stream(
         Some(d) => d.clone(),
         None => return Err("Active stream is not in HLS mode".to_string()),
     };
+    let needs_video_transcode = guard.needs_video_transcode;
 
     if let Some(mut child) = guard.ffmpeg_child.take() {
         let _ = child.kill().await;
+        let _ = child.wait().await;
     }
 
     if let Ok(entries) = fs::read_dir(&hls_dir) {
@@ -327,8 +372,9 @@ pub async fn seek_hls_stream(
         }
     }
 
-    let child = spawn_hls_ffmpeg(&video_path, &hls_dir, target_seconds, false)?;
+    let child = spawn_hls_ffmpeg(&video_path, &hls_dir, target_seconds, needs_video_transcode)?;
     guard.ffmpeg_child = Some(child);
+    drop(guard);
 
     let playlist_path = hls_dir.join("stream.m3u8");
     for _ in 0..40 {
@@ -379,18 +425,29 @@ pub async fn start_host_tunnel(
     let probe = probe_video_file(&file_path).await;
     let duration = probe.duration;
     let needs_transcode = probe.needs_video_transcode || probe.needs_audio_transcode;
+    let needs_faststart = ext == "mp4" && crate::mp4::needs_faststart(&path);
 
     let selected_mode = match stream_mode.as_deref() {
         Some("hls") => "hls".to_string(),
-        Some("direct") if !needs_transcode => "direct".to_string(),
+        Some("direct") if !needs_transcode && !needs_faststart => "direct".to_string(),
         _ => {
-            if ext == "mkv" || ext == "avi" || ext == "mov" || needs_transcode {
+            if ext == "mkv" || ext == "avi" || ext == "mov" || needs_transcode || needs_faststart {
                 "hls".to_string()
             } else {
                 "direct".to_string()
             }
         }
     };
+
+    if needs_faststart && stream_mode.as_deref() != Some("hls") {
+        let _ = app.emit(
+            "host-tunnel-status",
+            serde_json::json!({
+                "step": "fallback-hls",
+                "message": "MP4 metadata is at the end of the file — using HLS passthrough for reliable playback."
+            }),
+        );
+    }
 
     let mut subtitle_url: Option<String> = None;
     let mut is_hls = false;
@@ -426,7 +483,13 @@ pub async fn start_host_tunnel(
             .output()
             .await;
 
-        let child = spawn_hls_ffmpeg(&file_path, &hls_dir, 0.0, probe.needs_video_transcode)?;
+        let child = match spawn_hls_ffmpeg(&file_path, &hls_dir, 0.0, probe.needs_video_transcode) {
+            Ok(child) => child,
+            Err(error) => {
+                let _ = fs::remove_dir_all(&hls_dir);
+                return Err(error);
+            }
+        };
 
         {
             let mut guard = state.lock().await;
@@ -434,6 +497,7 @@ pub async fn start_host_tunnel(
             guard.hls_dir = Some(hls_dir.clone());
             guard.current_video_path = Some(file_path.clone());
             guard.stream_mode = Some("hls".to_string());
+            guard.needs_video_transcode = probe.needs_video_transcode;
         }
 
         let playlist_path = hls_dir.join("stream.m3u8");
@@ -470,7 +534,12 @@ pub async fn start_host_tunnel(
     let mut router = axum::Router::new()
         .route(
             "/health",
-            axum::routing::get(|| async { axum::Json(serde_json::json!({ "status": "ok" })) }),
+            axum::routing::get({
+                let probe_duration = duration;
+                move || async move {
+                    axum::Json(serde_json::json!({ "status": "ok", "duration": probe_duration }))
+                }
+            }),
         )
         .route(
             "/info",
@@ -499,14 +568,11 @@ pub async fn start_host_tunnel(
         .allow_origin(tower_http::cors::Any)
         .allow_methods(tower_http::cors::Any)
         .allow_headers(tower_http::cors::Any)
-        .expose_headers([
-            axum::http::HeaderName::from_static("content-range"),
-            axum::http::HeaderName::from_static("accept-ranges"),
-            axum::http::HeaderName::from_static("content-length"),
-            axum::http::HeaderName::from_static("content-type"),
-        ]);
+        .expose_headers([CONTENT_RANGE, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_TYPE]);
 
-    let server_app = router.layer(cors);
+    let server_app = router
+        .layer(cors)
+        .layer(axum::middleware::from_fn(allow_private_network));
 
     tokio::spawn(async move {
         let _ = axum::serve(listener, server_app)
@@ -515,6 +581,11 @@ pub async fn start_host_tunnel(
             })
             .await;
     });
+
+    {
+        let mut guard = state.lock().await;
+        guard.server_shutdown = Some(shutdown_tx);
+    }
 
     let _ = app.emit(
         "host-tunnel-status",
@@ -535,11 +606,23 @@ pub async fn start_host_tunnel(
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
-    let mut cf_child = cf_cmd
-        .spawn()
-        .map_err(|e| format!("Failed to launch cloudflared: {e}"))?;
+    let mut cf_child = match cf_cmd.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            cleanup_tunnel(&state).await;
+            return Err(format!("Failed to launch cloudflared: {error}"));
+        }
+    };
 
-    let stderr = cf_child.stderr.take().ok_or("Failed to read cloudflared stderr")?;
+    let stderr = match cf_child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            let _ = cf_child.kill().await;
+            let _ = cf_child.wait().await;
+            cleanup_tunnel(&state).await;
+            return Err("Failed to read cloudflared stderr".to_string());
+        }
+    };
 
     let (url_tx, url_rx) = oneshot::channel::<String>();
     let url_tx_opt = Arc::new(Mutex::new(Some(url_tx)));
@@ -565,12 +648,34 @@ pub async fn start_host_tunnel(
                 );
             }
         }
+
+        if tx_ref.lock().await.is_some() {
+            let _ = app_tunnel.emit(
+                "host-tunnel-status",
+                serde_json::json!({
+                    "step": "error",
+                    "message": "Cloudflare tunnel exited before publishing a URL."
+                }),
+            );
+        }
     });
 
-    let tunnel_base_url = tokio::time::timeout(std::time::Duration::from_secs(30), url_rx)
-        .await
-        .map_err(|_| "Timeout waiting for Cloudflare tunnel URL".to_string())?
-        .map_err(|_| "Failed to obtain Cloudflare tunnel URL".to_string())?;
+    let tunnel_base_url =
+        match tokio::time::timeout(std::time::Duration::from_secs(30), url_rx).await {
+            Ok(Ok(url)) => url,
+            Ok(Err(_)) => {
+                let _ = cf_child.kill().await;
+                let _ = cf_child.wait().await;
+                cleanup_tunnel(&state).await;
+                return Err("Failed to obtain Cloudflare tunnel URL".to_string());
+            }
+            Err(_) => {
+                let _ = cf_child.kill().await;
+                let _ = cf_child.wait().await;
+                cleanup_tunnel(&state).await;
+                return Err("Timeout waiting for Cloudflare tunnel URL".to_string());
+            }
+        };
 
     let (stream_url, local_stream_url) = if is_hls {
         let s_url = format!("{tunnel_base_url}/hls/stream.m3u8");
@@ -600,7 +705,6 @@ pub async fn start_host_tunnel(
 
     {
         let mut guard = state.lock().await;
-        guard.server_shutdown = Some(shutdown_tx);
         guard.cloudflared_child = Some(cf_child);
     }
 
