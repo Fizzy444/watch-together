@@ -3,7 +3,7 @@ use axum::extract::Request;
 use axum::http::header::{
     ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderName, HeaderValue,
 };
-use axum::http::{Method, Response};
+use axum::http::Response;
 use axum::middleware::Next;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -160,15 +160,21 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
 }
 
 fn resolve_cloudflared_binary() -> PathBuf {
-    let candidates = [
-        "client/node_modules/cloudflared/bin/cloudflared.exe",
-        "../client/node_modules/cloudflared/bin/cloudflared.exe",
-        "client/node_modules/cloudflared/bin/cloudflared",
-        "../client/node_modules/cloudflared/bin/cloudflared",
+    let mut candidates = vec![
+        PathBuf::from("client/node_modules/cloudflared/bin/cloudflared.exe"),
+        PathBuf::from("../client/node_modules/cloudflared/bin/cloudflared.exe"),
+        PathBuf::from("client/node_modules/cloudflared/bin/cloudflared"),
+        PathBuf::from("../client/node_modules/cloudflared/bin/cloudflared"),
     ];
 
-    for candidate in candidates {
-        let path = PathBuf::from(candidate);
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            candidates.push(parent.join(if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" }));
+            candidates.push(parent.join("bin").join(if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" }));
+        }
+    }
+
+    for path in candidates {
         if path.exists() {
             if let Ok(abs) = path.canonicalize() {
                 return abs;
@@ -181,24 +187,16 @@ fn resolve_cloudflared_binary() -> PathBuf {
 }
 
 async fn allow_private_network(request: Request<Body>, next: Next) -> Response<Body> {
-    let needs_private_network_header = request.method() == Method::OPTIONS
-        || request
-            .headers()
-            .get(HeaderName::from_static(
-                "access-control-request-private-network",
-            ))
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-
     let mut response = next.run(request).await;
-
-    if needs_private_network_header {
-        response.headers_mut().insert(
-            HeaderName::from_static("access-control-allow-private-network"),
-            HeaderValue::from_static("true"),
-        );
-    }
-
+    let headers = response.headers_mut();
+    headers.insert(
+        HeaderName::from_static("access-control-allow-private-network"),
+        HeaderValue::from_static("true"),
+    );
+    headers.insert(
+        HeaderName::from_static("access-control-allow-origin"),
+        HeaderValue::from_static("*"),
+    );
     response
 }
 
@@ -501,11 +499,28 @@ pub async fn start_host_tunnel(
         }
 
         let playlist_path = hls_dir.join("stream.m3u8");
+        let mut playlist_ready = false;
         for _ in 0..50 {
             if playlist_path.exists() {
+                playlist_ready = true;
                 break;
             }
+            {
+                let mut guard = state.lock().await;
+                if let Some(child) = guard.ffmpeg_child.as_mut() {
+                    if let Ok(Some(status)) = child.try_wait() {
+                        drop(guard);
+                        cleanup_tunnel(&state).await;
+                        return Err(format!("FFmpeg failed to initialize HLS stream (exit code: {status})"));
+                    }
+                }
+            }
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        if !playlist_ready {
+            cleanup_tunnel(&state).await;
+            return Err("Timed out waiting for HLS playlist generation".to_string());
         }
 
         active_hls_dir = Some(hls_dir);
