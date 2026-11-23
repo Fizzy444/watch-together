@@ -1042,9 +1042,6 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       const totalDur = effectiveDuration || (isFinite(video.duration) ? video.duration : 0);
       const target = Math.max(0, Math.min(totalDur, video.currentTime + seconds));
 
-      if (isHlsSource && (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)) {
-        (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)(target).catch(() => {});
-      }
       video.currentTime = target;
       setCurrentTime(target);
       onSeek?.(target);
@@ -1054,7 +1051,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         text: `${seconds > 0 ? '+' : ''}${seconds}s`,
       });
     },
-    [effectiveDuration, onSeek, showHud, isHlsSource]
+    [effectiveDuration, onSeek, showHud]
   );
 
   // Absolute seek from range slider
@@ -1063,14 +1060,11 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       if (!isHostRef.current || !videoRef.current) return;
       const targetTime = Number(e.target.value);
       const video = videoRef.current;
-      if (isHlsSource && (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)) {
-        (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)(targetTime).catch(() => {});
-      }
       video.currentTime = targetTime;
       setCurrentTime(targetTime);
       onSeek?.(targetTime);
     },
-    [onSeek, isHlsSource]
+    [onSeek]
   );
 
   const toggleMute = useCallback(() => {

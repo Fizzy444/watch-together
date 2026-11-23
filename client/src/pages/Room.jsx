@@ -52,7 +52,7 @@ export default function Room() {
 
   const isHostNav = Boolean(location.state?.isHost);
   const isFromDashboard = Boolean(location.state?.fromDashboard);
-  const storedName = getProfileName();
+  const storedName = getProfileName() || (isHostNav ? 'Host' : '');
 
   const [hasJoined, setHasJoined] = useState(() => {
     if ((isHostNav || isFromDashboard) && storedName) {
@@ -68,8 +68,12 @@ export default function Room() {
   const [myUserId] = useState(getSessionClientId);
 
   const [streamReady, setStreamReady] = useState(false);
-  const [hostLocalStreamUrl, setHostLocalStreamUrl] = useState(() => window.__hostLocalStreamUrl || null);
-  const [hostSubtitleUrl] = useState(() => window.__hostSubtitleUrl || null);
+  const [hostLocalStreamUrl, setHostLocalStreamUrl] = useState(
+    () => location.state?.localStreamUrl || window.__hostLocalStreamUrl || null
+  );
+  const [hostSubtitleUrl] = useState(
+    () => location.state?.subtitleUrl || window.__hostSubtitleUrl || null
+  );
   const [error, setError] = useState('');
     const [toasts, setToasts] = useState([]);
   const pollRef = useRef(null);

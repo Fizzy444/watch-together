@@ -63,9 +63,12 @@ export default function CreateRoomModal({ isOpen, onClose }) {
             size: res.fileSize || res.size || 0,
             fileSize: res.fileSize || res.size || 0,
             filePath: res.filePath,
+            duration: res.duration || 0,
+            recommendedMode: res.recommendedMode || "hls",
+            reason: res.reason || "",
           };
           setSelectedFile(fileObj);
-          setStreamMode(detectOptimalStreamMode(pickedName));
+          setStreamMode(res.recommendedMode || detectOptimalStreamMode(pickedName));
           if (!roomName.trim()) {
             setRoomName(pickedName.replace(/\.[^/.]+$/, ""));
           }
@@ -170,7 +173,14 @@ export default function CreateRoomModal({ isOpen, onClose }) {
         });
 
         onClose();
-        navigate(`/watch/${room.roomId || room.id}`, { state: { isHost: true } });
+        navigate(`/watch/${room.roomId || room.id}`, {
+          state: {
+            isHost: true,
+            localStreamUrl: window.__hostLocalStreamUrl || null,
+            subtitleUrl: window.__hostSubtitleUrl || null,
+            videoPath: selectedFile?.filePath || null,
+          },
+        });
         return;
       }
 
@@ -187,7 +197,14 @@ export default function CreateRoomModal({ isOpen, onClose }) {
         });
 
         onClose();
-        navigate(`/watch/${room.roomId || room.id}`, { state: { isHost: true } });
+        navigate(`/watch/${room.roomId || room.id}`, {
+          state: {
+            isHost: true,
+            localStreamUrl: window.__hostLocalStreamUrl || null,
+            subtitleUrl: window.__hostSubtitleUrl || null,
+            videoPath: selectedFile?.filePath || null,
+          },
+        });
         return;
       }
 
@@ -208,7 +225,14 @@ export default function CreateRoomModal({ isOpen, onClose }) {
         }
 
         onClose();
-        navigate(`/watch/${room.roomId || room.id}`, { state: { isHost: true } });
+        navigate(`/watch/${room.roomId || room.id}`, {
+          state: {
+            isHost: true,
+            localStreamUrl: window.__hostLocalStreamUrl || null,
+            subtitleUrl: window.__hostSubtitleUrl || null,
+            videoPath: selectedFile?.filePath || null,
+          },
+        });
         return;
       }
     } catch (err) {
@@ -382,19 +406,19 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                           ) : (
                             <Zap size={16} color="var(--primary, #e5484d)" style={{ flexShrink: 0 }} />
                           )}
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--text-1)" }}>
-                              {streamMode === 'direct' ? 'Direct Passthrough' : 'JIT HLS Engine'}
-                              <span style={{ fontSize: "0.6875rem", color: "var(--text-3)", fontWeight: 400, marginLeft: 6 }}>
-                                (Auto-selected)
-                              </span>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--text-1)" }}>
+                                {streamMode === 'direct' ? 'Direct Passthrough' : 'JIT HLS Engine'}
+                                <span style={{ fontSize: "0.6875rem", color: "var(--text-3)", fontWeight: 400, marginLeft: 6 }}>
+                                  {selectedFile?.recommendedMode === streamMode ? '(Auto-selected)' : '(Manual override)'}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: "0.71875rem", color: "var(--text-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {selectedFile?.reason || (streamMode === 'direct'
+                                  ? 'Native HTTP 206 stream • Instant 0s start • 0% CPU'
+                                  : 'Universal browser & mobile sync • Auto subtitles')}
+                              </div>
                             </div>
-                            <div style={{ fontSize: "0.71875rem", color: "var(--text-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {streamMode === 'direct'
-                                ? 'Native HTTP 206 stream • Instant 0s start • 0% CPU'
-                                : 'Universal browser & iPhone sync • Auto subtitles'}
-                            </div>
-                          </div>
                         </div>
 
                         <button

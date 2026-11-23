@@ -27,6 +27,11 @@ pub struct VideoFileInfo {
     pub file_name: String,
     pub size: u64,
     pub file_size: u64,
+    pub duration: f64,
+    pub recommended_mode: String,
+    pub reason: String,
+    pub needs_transcode: bool,
+    pub needs_faststart: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -129,9 +134,7 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
         .filter(|s| s.codec_type.as_deref() == Some("video"))
         .collect();
 
-    let supported_video: HashSet<&str> = ["h264", "avc1", "vp9", "av1"]
-        .into_iter()
-        .collect();
+    let supported_video: HashSet<&str> = ["h264", "avc1"].into_iter().collect();
 
     let supported_audio: HashSet<&str> = ["aac", "mp3", "opus", "vorbis", "flac"]
         .into_iter()
@@ -223,12 +226,38 @@ pub async fn select_video_file() -> Result<Option<VideoFileInfo>, String> {
     let meta = fs::metadata(&path).map_err(|e| e.to_string())?;
     let size = meta.len();
 
+    let probe = probe_video_file(&path.to_string_lossy()).await;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let needs_faststart = ext == "mp4" && crate::mp4::needs_faststart(&path);
+    let needs_transcode = probe.needs_video_transcode || probe.needs_audio_transcode;
+
+    let (recommended_mode, reason) = if ext != "mp4" && ext != "webm" {
+        ("hls".to_string(), format!("Container (.{ext}) requires HLS engine for browser playback"))
+    } else if probe.needs_video_transcode {
+        ("hls".to_string(), "Video codec requires transcoding to H.264".to_string())
+    } else if probe.needs_audio_transcode {
+        ("hls".to_string(), "Audio track requires transcoding to AAC".to_string())
+    } else if needs_faststart {
+        ("hls".to_string(), "MP4 metadata is at end of file (HLS recommended for instant start)".to_string())
+    } else {
+        ("direct".to_string(), "Optimized for Direct Passthrough (instant 0s start • 0% CPU)".to_string())
+    };
+
     Ok(Some(VideoFileInfo {
         file_path: path.to_string_lossy().to_string(),
         name: file_name.clone(),
         file_name,
         size,
         file_size: size,
+        duration: probe.duration,
+        recommended_mode,
+        reason,
+        needs_transcode,
+        needs_faststart,
     }))
 }
 
@@ -301,6 +330,8 @@ fn spawn_hls_ffmpeg(
             "ultrafast".to_string(),
             "-crf".to_string(),
             "22".to_string(),
+            "-pix_fmt".to_string(),
+            "yuv420p".to_string(),
         ]);
     } else {
         args.extend(["-c:v".to_string(), "copy".to_string()]);
@@ -342,46 +373,11 @@ fn spawn_hls_ffmpeg(
 
 #[tauri::command]
 pub async fn seek_hls_stream(
-    state: tauri::State<'_, SharedTunnelState>,
-    target_seconds: f64,
+    _state: tauri::State<'_, SharedTunnelState>,
+    _target_seconds: f64,
 ) -> Result<bool, String> {
-    let mut guard = state.lock().await;
-    let video_path = match &guard.current_video_path {
-        Some(p) => p.clone(),
-        None => return Err("No active video stream to seek".to_string()),
-    };
-    let hls_dir = match &guard.hls_dir {
-        Some(d) => d.clone(),
-        None => return Err("Active stream is not in HLS mode".to_string()),
-    };
-    let needs_video_transcode = guard.needs_video_transcode;
-
-    if let Some(mut child) = guard.ffmpeg_child.take() {
-        let _ = child.kill().await;
-        let _ = child.wait().await;
-    }
-
-    if let Ok(entries) = fs::read_dir(&hls_dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.extension().map_or(false, |ext| ext == "ts" || ext == "m3u8") {
-                let _ = fs::remove_file(p);
-            }
-        }
-    }
-
-    let child = spawn_hls_ffmpeg(&video_path, &hls_dir, target_seconds, needs_video_transcode)?;
-    guard.ffmpeg_child = Some(child);
-    drop(guard);
-
-    let playlist_path = hls_dir.join("stream.m3u8");
-    for _ in 0..40 {
-        if playlist_path.exists() {
-            break;
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-    }
-
+    // Hls.js client handles seeking across the generated segments smoothly.
+    // Deleting active segments from disk causes fatal 404s and freezes playback.
     Ok(true)
 }
 
@@ -427,7 +423,40 @@ pub async fn start_host_tunnel(
 
     let selected_mode = match stream_mode.as_deref() {
         Some("hls") => "hls".to_string(),
-        Some("direct") if !needs_transcode && !needs_faststart => "direct".to_string(),
+        Some("direct") => {
+            if ext == "mp4" || ext == "webm" {
+                if !probe.needs_video_transcode && !probe.needs_audio_transcode {
+                    "direct".to_string()
+                } else if !probe.needs_video_transcode {
+                    let _ = app.emit(
+                        "host-tunnel-status",
+                        serde_json::json!({
+                            "step": "fallback-hls",
+                            "message": "Audio track requires transcoding to AAC — switched to HLS."
+                        }),
+                    );
+                    "hls".to_string()
+                } else {
+                    let _ = app.emit(
+                        "host-tunnel-status",
+                        serde_json::json!({
+                            "step": "fallback-hls",
+                            "message": "Video codec requires transcoding to H.264 — switched to HLS."
+                        }),
+                    );
+                    "hls".to_string()
+                }
+            } else {
+                let _ = app.emit(
+                    "host-tunnel-status",
+                    serde_json::json!({
+                        "step": "fallback-hls",
+                        "message": format!("Container '.{ext}' cannot be played directly by browsers — using HLS.")
+                    }),
+                );
+                "hls".to_string()
+            }
+        }
         _ => {
             if ext == "mkv" || ext == "avi" || ext == "mov" || needs_transcode || needs_faststart {
                 "hls".to_string()
@@ -436,16 +465,6 @@ pub async fn start_host_tunnel(
             }
         }
     };
-
-    if needs_faststart && stream_mode.as_deref() != Some("hls") {
-        let _ = app.emit(
-            "host-tunnel-status",
-            serde_json::json!({
-                "step": "fallback-hls",
-                "message": "MP4 metadata is at the end of the file — using HLS passthrough for reliable playback."
-            }),
-        );
-    }
 
     let mut subtitle_url: Option<String> = None;
     let mut is_hls = false;
