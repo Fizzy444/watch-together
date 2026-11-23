@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
-import { User, X, Check, LogOut } from 'lucide-react';
-import { logoutApi } from '../utils/auth.js';
-import { saveProfileName, clearProfileName } from '../utils/profile.js';
+import { User, X, Check } from 'lucide-react';
+import { saveProfileName } from '../utils/profile.js';
 
 export default function ProfileModal({
   isOpen,
@@ -20,7 +19,6 @@ export default function ProfileModal({
     }
   }, [isOpen, currentName]);
 
-  // Escape key handler if not mandatory
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && isOpen && !isMandatory) {
@@ -37,7 +35,7 @@ export default function ProfileModal({
     e.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) {
-      setError('Please enter a display name');
+      setError('Please enter a username');
       return;
     }
 
@@ -62,7 +60,7 @@ export default function ProfileModal({
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
             <User size={18} />
             <h3 style={{ fontSize: '1rem', margin: 0 }}>
-              {currentName ? 'Edit Profile' : 'Choose Display Name'}
+              {currentName ? 'Edit Username' : 'Choose Username'}
             </h3>
           </div>
           {!isMandatory && (
@@ -75,7 +73,7 @@ export default function ProfileModal({
         <form onSubmit={handleSubmit}>
           <div className="modal-body" style={{ gap: 'var(--sp-3)' }}>
             <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', margin: 0 }}>
-              Your display name is shown in rooms and chat. No registration or password required.
+              Your username is shown in rooms and chat.
             </p>
 
             {error && (
@@ -95,12 +93,12 @@ export default function ProfileModal({
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
               <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-2)' }}>
-                Display Name
+                Username
               </label>
               <input
                 type="text"
                 className="input"
-                placeholder="Enter your name..."
+                placeholder="Enter your username..."
                 value={name}
                 onChange={(e) => {
                   setName(e.target.value);
@@ -112,40 +110,21 @@ export default function ProfileModal({
             </div>
           </div>
 
-          <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            {currentName && (
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                onClick={async () => {
-                  try { await logoutApi(); } catch {}
-                  clearProfileName();
-                  window.dispatchEvent(new CustomEvent("wt-auth-changed", { detail: { user: null, token: null } }));
-                  onClose?.();
-                }}
-                style={{ color: "var(--error)", display: "inline-flex", alignItems: "center", gap: 6 }}
-                title="Sign out of your profile"
-              >
-                <LogOut size={14} />
-                Sign Out
+          <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--sp-2)' }}>
+            {!isMandatory && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+                Cancel
               </button>
             )}
-            <div style={{ display: "flex", gap: "var(--sp-2)", marginLeft: "auto" }}>
-              {!isMandatory && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
-                  Cancel
-                </button>
-              )}
-              <button
-                type="submit"
-                className="btn btn-primary btn-sm"
-                disabled={!name.trim()}
-                style={{ minWidth: 100 }}
-              >
-                <Check size={14} style={{ marginRight: 4 }} />
-                {currentName ? "Save" : "Continue"}
-              </button>
-            </div>
+            <button
+              type="submit"
+              className="btn btn-primary btn-sm"
+              disabled={!name.trim()}
+              style={{ minWidth: 100 }}
+            >
+              <Check size={14} style={{ marginRight: 4 }} />
+              {currentName ? 'Save' : 'Continue'}
+            </button>
           </div>
         </form>
       </div>

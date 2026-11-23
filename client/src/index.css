@@ -1718,3 +1718,124 @@ svg.spin {
   background: #d13b40;
   color: #ffffff;
 }
+
+/* ── Room Join Screen (Direct Link) ────────────────────────── */
+.room-join-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6) var(--sp-4);
+  background: var(--bg-base);
+}
+
+.room-join-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: var(--sp-8);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  animation: modalScale var(--t-fast) ease-out;
+}
+
+.room-join-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--sp-2);
+}
+
+.room-join-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--r-lg);
+  background: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--sp-2);
+  box-shadow: 0 4px 16px var(--primary-subtle);
+}
+
+.room-join-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--r-full);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 500;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-join-title {
+  font-size: 1.375rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  margin: 0;
+}
+
+.room-join-subtitle {
+  font-size: 0.875rem;
+  color: var(--text-3);
+  margin: 0;
+  line-height: 1.45;
+}
+
+.room-join-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.room-join-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.room-join-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.room-join-input {
+  width: 100%;
+  font-size: 0.9375rem;
+  padding: 10px 14px;
+}
+
+.room-join-error {
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--error-subtle);
+  border: 1px solid var(--error);
+  border-radius: var(--r-md);
+  color: var(--error);
+  font-size: 0.8125rem;
+}
+
+.room-join-btn {
+  width: 100%;
+  padding: 12px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: var(--sp-1);
+}

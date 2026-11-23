@@ -29,6 +29,9 @@ import {
   Upload,
   PanelRightClose,
   PanelRightOpen,
+  PlaySquare,
+  Film,
+  Play,
 } from 'lucide-react';
 
 export default function Room() {
@@ -41,9 +44,21 @@ export default function Room() {
   const [localStream, setLocalStream] = useState(null);
   const filePickerRef = useRef(null);
 
-  // Profile state — NO default 'Host' or 'Guest' name!
-  const [userName, setUserName] = useState(getProfileName);
-  const [isProfileModalOpen, setIsProfileModalOpen] = useState(!getProfileName());
+  const isHostNav = Boolean(location.state?.isHost);
+  const isFromDashboard = Boolean(location.state?.fromDashboard);
+  const storedName = getProfileName();
+
+  const [hasJoined, setHasJoined] = useState(() => {
+    if ((isHostNav || isFromDashboard) && storedName) {
+      return true;
+    }
+    return false;
+  });
+
+  const [userName, setUserName] = useState(() => (hasJoined ? storedName : ''));
+  const [inputUserName, setInputUserName] = useState(storedName || '');
+  const [joinError, setJoinError] = useState('');
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [myUserId] = useState(getSessionClientId);
 
   const [streamReady, setStreamReady] = useState(false);
@@ -118,10 +133,9 @@ export default function Room() {
     [applyMessage, myUserId]
   );
 
-  // Only connect WebSocket once user has set their name
   const { connected, send } = useWebSocket(
     roomId,
-    userName || 'Guest',
+    hasJoined ? userName : null,
     handleMessage
   );
 
@@ -228,6 +242,19 @@ export default function Room() {
       setClosing(false);
       setShowCloseConfirm(false);
     }
+  }
+
+  function handleJoinSession(e) {
+    e.preventDefault();
+    const trimmed = inputUserName.trim();
+    if (!trimmed) {
+      setJoinError('Please enter a username to join');
+      return;
+    }
+    saveProfileName(trimmed);
+    setUserName(trimmed);
+    setHasJoined(true);
+    setJoinError('');
   }
 
   function handleProfileSave(newName) {
@@ -369,6 +396,68 @@ export default function Room() {
     );
   }
 
+  if (!hasJoined) {
+    const movieOrRoomName = room.name || room.movieName || 'Watch Session';
+    const hostUser = room.users?.find((u) => u.isHost || u.id === room.hostId);
+    const hostName = hostUser?.name || room.hostName || '';
+
+    return (
+      <div className="room-join-screen">
+        <div className="room-join-card">
+          <div className="room-join-header">
+            <div className="room-join-icon">
+              <PlaySquare size={28} color="#fff" />
+            </div>
+            <div className="room-join-badge">
+              <Film size={13} />
+              <span>{movieOrRoomName}</span>
+            </div>
+            <h2 className="room-join-title">Join Watch Session</h2>
+            <p className="room-join-subtitle">
+              {hostName ? `${hostName} invited you to watch together.` : 'Enter your username to start watching.'}
+            </p>
+          </div>
+
+          <form onSubmit={handleJoinSession} className="room-join-form">
+            <div className="room-join-input-wrap">
+              <label htmlFor="join-username-input" className="room-join-label">
+                Username
+              </label>
+              <input
+                id="join-username-input"
+                type="text"
+                className="input room-join-input"
+                placeholder="Enter your username..."
+                value={inputUserName}
+                onChange={(e) => {
+                  setInputUserName(e.target.value);
+                  if (joinError) setJoinError('');
+                }}
+                autoFocus
+                maxLength={32}
+              />
+            </div>
+
+            {joinError && (
+              <div className="room-join-error">
+                {joinError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="btn btn-primary room-join-btn"
+              disabled={!inputUserName.trim()}
+            >
+              <Play size={16} fill="currentColor" />
+              <span>Join Session</span>
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   // Direct progressive streaming endpoint
   const serverUrl = getServerUrl() || DEFAULT_SERVER_URL;
   const videoSrc = isTunnel ? ((isHost && window.__hostLocalStreamUrl) ? window.__hostLocalStreamUrl : room.movie) : (streamReady ? `${serverUrl}/api/rooms/${roomId}/video` : null);
@@ -460,12 +549,14 @@ export default function Room() {
         </div>
 
         <div className="room-topbar-right">
-          {/* Profile Badge with dropdown & Sign Out */}
+          {/* Profile Badge with dropdown */}
           {userName && (
             <ProfileBadge
               name={userName}
-              onSignOut={() => {
-                navigate("/dashboard");
+              onEdit={() => setIsProfileModalOpen(true)}
+              onClear={() => {
+                setUserName('');
+                setHasJoined(false);
               }}
             />
           )}
@@ -757,7 +848,6 @@ export default function Room() {
         onClose={() => setIsProfileModalOpen(false)}
         currentName={userName}
         onSave={handleProfileSave}
-        isMandatory={!userName}
       />
 
       {/* Close Room Confirmation Modal */}

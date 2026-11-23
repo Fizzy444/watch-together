@@ -2,15 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getActiveRooms } from '../api/index.js';
 import { getProfileName } from '../utils/profile.js';
-import { getStoredUser } from '../utils/auth.js';
 import CreateRoomModal from '../components/CreateRoomModal.jsx';
 import ProfileBadge from '../components/ProfileBadge.jsx';
-import AuthModal from '../components/AuthModal.jsx';
+import ProfileModal from '../components/ProfileModal.jsx';
 import {
   PlaySquare,
   Plus,
   Search,
-  LogIn,
+  User,
   Film,
   Radio,
   Loader2,
@@ -25,17 +24,9 @@ export default function Home() {
   const [activeRooms, setActiveRooms] = useState([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
 
-  // Auth & Profile state (username is permanent)
-  const [currentUser, setCurrentUser] = useState(getStoredUser);
-  const [profileName, setProfileName] = useState(() => {
-    const user = getStoredUser();
-    return user?.username || getProfileName();
-  });
-
-  // Modal states
+  const [profileName, setProfileName] = useState(getProfileName);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState('signin');
 
   // Search & quick join states
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,29 +50,6 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [fetchRooms]);
 
-  // Listen for auth changes
-  useEffect(() => {
-    const handleAuthChange = (e) => {
-      const user = e.detail?.user || null;
-      setCurrentUser(user);
-      if (user) {
-        setProfileName(user.username);
-      } else {
-        setProfileName(getProfileName() || "");
-      }
-    };
-    window.addEventListener('wt-auth-changed', handleAuthChange);
-    return () => window.removeEventListener('wt-auth-changed', handleAuthChange);
-  }, []);
-
-  function handleAuthSuccess(user) {
-    setAuthModalOpen(false);
-    setCurrentUser(user);
-    if (user?.username) {
-      setProfileName(user.username);
-    }
-  }
-
   // Filtered rooms based on search
   const filteredRooms = activeRooms.filter((r) => {
     const q = searchQuery.toLowerCase().trim();
@@ -99,14 +67,14 @@ export default function Home() {
   }
 
   function handleJoinRoom(roomId) {
-    navigate(`/watch/${roomId}`);
+    navigate(`/watch/${roomId}`, { state: { fromDashboard: Boolean(profileName) } });
   }
 
   function handleDirectJoin(e) {
     e.preventDefault();
     const clean = directCode.trim().toLowerCase();
     if (clean) {
-      navigate(`/watch/${clean}`);
+      navigate(`/watch/${clean}`, { state: { fromDashboard: Boolean(profileName) } });
     }
   }
 
@@ -187,39 +155,23 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Header Right Actions: Profile / Auth + Create Room */}
+        {/* Header Right Actions: Profile + Create Room */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
-          {currentUser ? (
+          {profileName ? (
             <ProfileBadge
-              name={currentUser.username}
-              onSignOut={() => {
-                setCurrentUser(null);
-                navigate('/');
-              }}
+              name={profileName}
+              onEdit={() => setIsProfileModalOpen(true)}
+              onClear={() => setProfileName('')}
             />
           ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-              {profileName && (
-                <ProfileBadge
-                  name={profileName}
-                  onSignOut={() => {
-                    setProfileName('');
-                    navigate('/');
-                  }}
-                />
-              )}
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => {
-                  setAuthModalMode('signin');
-                  setAuthModalOpen(true);
-                }}
-                style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-              >
-                <LogIn size={14} />
-                Sign In
-              </button>
-            </div>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setIsProfileModalOpen(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <User size={14} />
+              <span>Set Username</span>
+            </button>
           )}
 
           <button
@@ -291,7 +243,7 @@ export default function Home() {
               disabled={!directCode.trim()}
               title="Join private room"
             >
-              <LogIn size={14} /> Join
+              <ArrowRight size={14} /> Join
             </button>
           </form>
         </section>
@@ -494,13 +446,12 @@ export default function Home() {
         onClose={() => setIsModalOpen(false)}
       />
 
-      {/* Auth Modal */}
-      <AuthModal
-        isOpen={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
-        initialMode={authModalMode}
-        onSuccess={handleAuthSuccess}
-        onAuthSuccess={handleAuthSuccess}
+      {/* Profile Modal */}
+      <ProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        currentName={profileName}
+        onSave={(newName) => setProfileName(newName)}
       />
     </div>
   );

@@ -1,9 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { User, LogOut, ChevronDown } from 'lucide-react';
-import { logoutApi } from '../utils/auth.js';
+import { User, ChevronDown, Edit2, Trash2 } from 'lucide-react';
 import { clearProfileName } from '../utils/profile.js';
 
-export default function ProfileBadge({ name, onSignOut }) {
+export default function ProfileBadge({ name, onEdit, onClear }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
 
@@ -20,17 +19,17 @@ export default function ProfileBadge({ name, onSignOut }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [open]);
 
-  async function handleSignOut(e) {
+  function handleEditClick(e) {
     e.stopPropagation();
-    try {
-      await logoutApi();
-    } catch (err) {
-      console.warn('Error during logout:', err);
-    }
-    clearProfileName();
-    window.dispatchEvent(new CustomEvent('wt-auth-changed', { detail: { user: null, token: null } }));
     setOpen(false);
-    onSignOut?.();
+    onEdit?.();
+  }
+
+  function handleClearClick(e) {
+    e.stopPropagation();
+    clearProfileName();
+    setOpen(false);
+    onClear?.();
   }
 
   return (
@@ -39,7 +38,7 @@ export default function ProfileBadge({ name, onSignOut }) {
         type="button"
         className="profile-badge-btn"
         onClick={() => setOpen((prev) => !prev)}
-        title={name ? `Signed in as ${name} (Click to open menu)` : 'Guest'}
+        title={name ? `Username: ${name}` : 'Guest'}
         style={{
           cursor: 'pointer',
           userSelect: 'none',
@@ -72,7 +71,7 @@ export default function ProfileBadge({ name, onSignOut }) {
             top: 'calc(100% + 8px)',
             right: 0,
             zIndex: 1000,
-            minWidth: 200,
+            minWidth: 180,
             background: 'var(--bg-card, #18181b)',
             border: '1px solid var(--border, rgba(255, 255, 255, 0.1))',
             borderRadius: 'var(--r-md, 10px)',
@@ -82,7 +81,6 @@ export default function ProfileBadge({ name, onSignOut }) {
             animation: 'fadeIn 0.15s ease-out',
           }}
         >
-          {/* User Info Header */}
           <div
             style={{
               padding: '8px 10px',
@@ -93,10 +91,10 @@ export default function ProfileBadge({ name, onSignOut }) {
           >
             <div
               style={{
-                width: 32,
-                height: 32,
+                width: 30,
+                height: 30,
                 borderRadius: '50%',
-                background: 'var(--primary, #3b82f6)',
+                background: 'var(--primary, #e5484d)',
                 color: '#fff',
                 fontSize: '0.8125rem',
                 fontWeight: 700,
@@ -106,7 +104,7 @@ export default function ProfileBadge({ name, onSignOut }) {
                 flexShrink: 0,
               }}
             >
-              {name ? initial : <User size={15} />}
+              {name ? initial : <User size={14} />}
             </div>
             <div style={{ overflow: 'hidden', flex: 1 }}>
               <div
@@ -123,26 +121,20 @@ export default function ProfileBadge({ name, onSignOut }) {
               </div>
               <div
                 style={{
-                  fontSize: '0.71875rem',
-                  color: 'var(--success, #10b981)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  marginTop: '1px',
+                  fontSize: '0.6875rem',
+                  color: 'var(--text-3)',
                 }}
               >
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />
-                <span>Active Profile</span>
+                Current Username
               </div>
             </div>
           </div>
 
           <div style={{ height: 1, background: 'var(--border, rgba(255, 255, 255, 0.08))', margin: '4px 0' }} />
 
-          {/* Sign Out Button */}
           <button
             type="button"
-            onClick={handleSignOut}
+            onClick={handleEditClick}
             style={{
               width: '100%',
               display: 'flex',
@@ -151,7 +143,37 @@ export default function ProfileBadge({ name, onSignOut }) {
               padding: '8px 10px',
               fontSize: '0.8125rem',
               fontWeight: 500,
-              color: 'var(--error, #ef4444)',
+              color: 'var(--text-1)',
+              background: 'transparent',
+              border: 'none',
+              borderRadius: 'var(--r-sm, 6px)',
+              cursor: 'pointer',
+              textAlign: 'left',
+              transition: 'background 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'var(--bg-hover)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <Edit2 size={13} color="var(--text-2)" />
+            <span>Change Username</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleClearClick}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 10px',
+              fontSize: '0.8125rem',
+              fontWeight: 500,
+              color: 'var(--text-3)',
               background: 'transparent',
               border: 'none',
               borderRadius: 'var(--r-sm, 6px)',
@@ -160,14 +182,16 @@ export default function ProfileBadge({ name, onSignOut }) {
               transition: 'background 0.15s ease, color 0.15s ease',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)';
+              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
+              e.currentTarget.style.color = 'var(--error)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = 'var(--text-3)';
             }}
           >
-            <LogOut size={14} />
-            <span>Sign Out</span>
+            <Trash2 size={13} />
+            <span>Clear Username</span>
           </button>
         </div>
       )}

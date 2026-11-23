@@ -1,15 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   PlaySquare,
-  Film,
   Zap,
   Clock,
   ShieldCheck,
-  FolderHeart,
   ArrowRight,
-  LogIn,
-  UserPlus,
   Radio,
   Tv,
   Users,
@@ -19,42 +15,10 @@ import {
   Play,
   CheckCircle2,
 } from 'lucide-react';
-import { getStoredUser } from '../utils/auth.js';
-import AuthModal from '../components/AuthModal.jsx';
 
 export default function Landing() {
   const navigate = useNavigate();
-  const [currentUser, setCurrentUser] = useState(getStoredUser);
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState('signin');
   const [roomCodeInput, setRoomCodeInput] = useState('');
-
-  // Automatically redirect logged-in users directly to the dashboard
-  useEffect(() => {
-    if (currentUser) {
-      navigate('/dashboard', { replace: true });
-    }
-  }, [currentUser, navigate]);
-
-  // Listen for auth changes across tabs/components
-  useEffect(() => {
-    const handleAuthChange = (e) => {
-      setCurrentUser(e.detail?.user || null);
-    };
-    window.addEventListener('wt-auth-changed', handleAuthChange);
-    return () => window.removeEventListener('wt-auth-changed', handleAuthChange);
-  }, []);
-
-  function handleOpenAuth(mode) {
-    setAuthModalMode(mode);
-    setAuthModalOpen(true);
-  }
-
-  function handleAuthSuccess(user) {
-    setAuthModalOpen(false);
-    setCurrentUser(user);
-    navigate('/dashboard');
-  }
 
   function handleJoinRoom(e) {
     e.preventDefault();
@@ -62,10 +26,6 @@ export default function Landing() {
     if (clean) {
       navigate(`/watch/${clean}`);
     }
-  }
-
-  if (currentUser) {
-    return null;
   }
 
   return (
@@ -153,35 +113,14 @@ export default function Landing() {
             How It Works
           </a>
 
-          {currentUser ? (
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={() => navigate('/dashboard')}
-              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              <Tv size={15} />
-              Dashboard ({currentUser.username})
-            </button>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-              <button
-                className="btn btn-secondary btn-sm"
-                onClick={() => handleOpenAuth('signin')}
-                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-              >
-                <LogIn size={15} />
-                Sign In
-              </button>
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={() => handleOpenAuth('signup')}
-                style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-              >
-                <UserPlus size={15} />
-                Sign Up
-              </button>
-            </div>
-          )}
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => navigate('/dashboard')}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            <Tv size={15} />
+            Open Dashboard
+          </button>
         </div>
       </header>
 
@@ -258,55 +197,21 @@ export default function Landing() {
             zIndex: 1,
           }}
         >
-          {currentUser ? (
-            <button
-              className="btn btn-primary"
-              style={{
-                fontSize: '1rem',
-                padding: '12px 28px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
-              onClick={() => navigate('/dashboard')}
-            >
-              <Tv size={18} />
-              Open Media Dashboard
-              <ArrowRight size={16} />
-            </button>
-          ) : (
-            <>
-              <button
-                className="btn btn-primary"
-                style={{
-                  fontSize: '1rem',
-                  padding: '12px 28px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                }}
-                onClick={() => handleOpenAuth('signup')}
-              >
-                <UserPlus size={18} />
-                Get Started — It's Free
-                <ArrowRight size={16} />
-              </button>
-              <button
-                className="btn btn-secondary"
-                style={{
-                  fontSize: '1rem',
-                  padding: '12px 24px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                }}
-                onClick={() => handleOpenAuth('signin')}
-              >
-                <LogIn size={18} />
-                Sign In
-              </button>
-            </>
-          )}
+          <button
+            className="btn btn-primary"
+            style={{
+              fontSize: '1rem',
+              padding: '12px 28px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+            onClick={() => navigate('/dashboard')}
+          >
+            <Tv size={18} />
+            Open Media Dashboard
+            <ArrowRight size={16} />
+          </button>
         </div>
 
         {/* Quick Join With Room Code */}
@@ -856,37 +761,15 @@ export default function Landing() {
             Sign in with your username or jump straight into the dashboard to start streaming.
           </p>
           <div style={{ display: 'flex', gap: 'var(--sp-3)', marginTop: 'var(--sp-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
-            {currentUser ? (
               <button
-                className="btn btn-primary"
-                style={{ padding: '12px 28px', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: 8 }}
-                onClick={() => navigate('/dashboard')}
-              >
-                <Tv size={18} />
-                Go to Dashboard
-                <ArrowRight size={16} />
-              </button>
-            ) : (
-              <>
-                <button
-                  className="btn btn-primary"
-                  style={{ padding: '12px 28px', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: 8 }}
-                  onClick={() => handleOpenAuth('signup')}
-                >
-                  <UserPlus size={18} />
-                  Create Free Account
-                  <ArrowRight size={16} />
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  style={{ padding: '12px 24px', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: 8 }}
-                  onClick={() => handleOpenAuth('signin')}
-                >
-                  <LogIn size={18} />
-                  Sign In
-                </button>
-              </>
-            )}
+              className="btn btn-primary"
+              style={{ padding: '12px 28px', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={() => navigate('/dashboard')}
+            >
+              <Tv size={18} />
+              Launch WatchTogether
+              <ArrowRight size={16} />
+            </button>
           </div>
         </div>
       </section>
@@ -914,19 +797,11 @@ export default function Landing() {
         <div style={{ display: 'flex', gap: 'var(--sp-4)', fontSize: '0.75rem', color: 'var(--text-3)' }}>
           <span>No cookies or ad tracking</span>
           <span>•</span>
-          <span>Username &amp; password auth</span>
+          <span>No account or password required</span>
           <span>•</span>
           <span>Local network accessible</span>
         </div>
       </footer>
-
-      {/* Auth Modal */}
-      <AuthModal
-        isOpen={authModalOpen}
-        initialMode={authModalMode}
-        onClose={() => setAuthModalOpen(false)}
-        onSuccess={handleAuthSuccess}
-      />
     </div>
   );
 }

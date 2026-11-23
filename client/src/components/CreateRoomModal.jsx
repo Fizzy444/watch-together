@@ -161,7 +161,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
         });
 
         onClose();
-        navigate(`/watch/${room.roomId || room.id}`);
+        navigate(`/watch/${room.roomId || room.id}`, { state: { isHost: true } });
         return;
       }
 
@@ -178,7 +178,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
         });
 
         onClose();
-        navigate(`/watch/${room.roomId || room.id}`);
+        navigate(`/watch/${room.roomId || room.id}`, { state: { isHost: true } });
         return;
       }
 
@@ -199,7 +199,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
         }
 
         onClose();
-        navigate(`/watch/${room.roomId || room.id}`);
+        navigate(`/watch/${room.roomId || room.id}`, { state: { isHost: true } });
         return;
       }
     } catch (err) {
