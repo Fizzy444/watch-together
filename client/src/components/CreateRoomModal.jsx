@@ -1,8 +1,16 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { X, Film, Upload, Zap, Loader2, Globe, Radio, ShieldCheck, Play, Layers } from "lucide-react";
+import { X, Film, Upload, Zap, Loader2, Globe, Radio, ShieldCheck, Play } from "lucide-react";
 import { createRoom } from "../api/index.js";
 import { getSessionClientId } from "../hooks/useWebSocket.js";
+
+function detectOptimalStreamMode(fileName) {
+  const ext = (fileName || "").split(".").pop()?.toLowerCase();
+  if (ext === "mp4" || ext === "webm") {
+    return "direct";
+  }
+  return "hls";
+}
 
 function formatBytes(bytes, decimals = 1) {
   if (!bytes || bytes === 0) return "0 B";
@@ -57,6 +65,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
             filePath: res.filePath,
           };
           setSelectedFile(fileObj);
+          setStreamMode(detectOptimalStreamMode(pickedName));
           if (!roomName.trim()) {
             setRoomName(pickedName.replace(/\.[^/.]+$/, ""));
           }
@@ -79,6 +88,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
       size: file.size,
       filePath: null,
     });
+    setStreamMode(detectOptimalStreamMode(file.name));
     if (!roomName.trim()) {
       setRoomName(file.name.replace(/\.[^/.]+$/, ""));
     }
@@ -139,7 +149,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
             }
             window.__hostFilePath = selectedFile.filePath;
             window.__hostMovieDuration = tunnelRes.duration || 0;
-            window.__hostIsLivePipe = Boolean(tunnelRes.isLivePipe || streamMode === 'pipe');
+            window.__hostIsLivePipe = false;
             window.__hostStreamMode = streamMode;
             window.__hostIsHls = Boolean(tunnelRes.isHls);
             finalMovieName = (selectedFile?.name || selectedFile?.fileName || "").replace(/\.[^/.]+$/, "");
@@ -353,117 +363,51 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                         </button>
                       </div>
 
-                      {/* 4-Mode Streaming Engine Selector */}
-                      <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", marginTop: "var(--sp-1)" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                          <label style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--text-1)" }}>
-                            Streaming Engine Mode
-                          </label>
-                          <span style={{ fontSize: "0.6875rem", color: "var(--text-3)" }}>
-                            Select how video is sliced &amp; delivered
-                          </span>
+                      {/* Automatic Streaming Engine Indicator */}
+                      <div
+                        style={{
+                          marginTop: "var(--sp-2)",
+                          padding: "10px 14px",
+                          background: "var(--bg-surface)",
+                          border: "1px solid var(--border)",
+                          borderRadius: "var(--r-md)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "10px",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0 }}>
+                          {streamMode === 'direct' ? (
+                            <Play size={16} color="var(--success, #10b981)" style={{ flexShrink: 0 }} />
+                          ) : (
+                            <Zap size={16} color="var(--primary, #e5484d)" style={{ flexShrink: 0 }} />
+                          )}
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: "0.8125rem", fontWeight: 600, color: "var(--text-1)" }}>
+                              {streamMode === 'direct' ? 'Direct Passthrough' : 'JIT HLS Engine'}
+                              <span style={{ fontSize: "0.6875rem", color: "var(--text-3)", fontWeight: 400, marginLeft: 6 }}>
+                                (Auto-selected)
+                              </span>
+                            </div>
+                            <div style={{ fontSize: "0.71875rem", color: "var(--text-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {streamMode === 'direct'
+                                ? 'Native HTTP 206 stream • Instant 0s start • 0% CPU'
+                                : 'Universal browser & iPhone sync • Auto subtitles'}
+                            </div>
+                          </div>
                         </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${streamMode === 'hls' ? 'btn-primary' : 'btn-secondary'}`}
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "flex-start",
-                              padding: "10px",
-                              height: "auto",
-                              textAlign: "left",
-                              borderRadius: "var(--r-md)",
-                              border: streamMode === 'hls' ? "1px solid var(--primary)" : "1px solid var(--border)",
-                            }}
-                            onClick={() => setStreamMode('hls')}
-                            disabled={loading}
-                          >
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: "0.8125rem" }}>
-                              <Zap size={14} color={streamMode === 'hls' ? '#fff' : 'var(--primary)'} />
-                              JIT HLS (Recommended)
-                            </div>
-                            <span style={{ fontSize: "0.6875rem", color: streamMode === 'hls' ? "rgba(255,255,255,0.85)" : "var(--text-3)", marginTop: 3 }}>
-                              Instant start (&lt;1.5s), universal iPhone &amp; browser sync
-                            </span>
-                          </button>
 
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${streamMode === 'direct' ? 'btn-primary' : 'btn-secondary'}`}
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "flex-start",
-                              padding: "10px",
-                              height: "auto",
-                              textAlign: "left",
-                              borderRadius: "var(--r-md)",
-                              border: streamMode === 'direct' ? "1px solid var(--primary)" : "1px solid var(--border)",
-                            }}
-                            onClick={() => setStreamMode('direct')}
-                            disabled={loading}
-                          >
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: "0.8125rem" }}>
-                              <Play size={14} color={streamMode === 'direct' ? '#fff' : '#10b981'} />
-                              Direct Passthrough
-                            </div>
-                            <span style={{ fontSize: "0.6875rem", color: streamMode === 'direct' ? "rgba(255,255,255,0.85)" : "var(--text-3)", marginTop: 3 }}>
-                              0s wait, 0% CPU, raw MKV/MP4 byte stream
-                            </span>
-                          </button>
-
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${streamMode === 'pipe' ? 'btn-primary' : 'btn-secondary'}`}
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "flex-start",
-                              padding: "10px",
-                              height: "auto",
-                              textAlign: "left",
-                              borderRadius: "var(--r-md)",
-                              border: streamMode === 'pipe' ? "1px solid var(--primary)" : "1px solid var(--border)",
-                            }}
-                            onClick={() => setStreamMode('pipe')}
-                            disabled={loading}
-                          >
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: "0.8125rem" }}>
-                              <Radio size={14} color={streamMode === 'pipe' ? '#fff' : '#a855f7'} />
-                              Fragmented MP4 Pipe
-                            </div>
-                            <span style={{ fontSize: "0.6875rem", color: streamMode === 'pipe' ? "rgba(255,255,255,0.85)" : "var(--text-3)", marginTop: 3 }}>
-                              Continuous live MP4 stream over single pipe
-                            </span>
-                          </button>
-
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${streamMode === 'wasm' ? 'btn-primary' : 'btn-secondary'}`}
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "flex-start",
-                              padding: "10px",
-                              height: "auto",
-                              textAlign: "left",
-                              borderRadius: "var(--r-md)",
-                              border: streamMode === 'wasm' ? "1px solid var(--primary)" : "1px solid var(--border)",
-                            }}
-                            onClick={() => setStreamMode('wasm')}
-                            disabled={loading}
-                          >
-                            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: "0.8125rem" }}>
-                              <Layers size={14} color={streamMode === 'wasm' ? '#fff' : '#f59e0b'} />
-                              Client WASM / MSE
-                            </div>
-                            <span style={{ fontSize: "0.6875rem", color: streamMode === 'wasm' ? "rgba(255,255,255,0.85)" : "var(--text-3)", marginTop: 3 }}>
-                              Host runs 0% FFmpeg, client demuxes in MSE
-                            </span>
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{ fontSize: "0.6875rem", padding: "4px 8px", color: "var(--text-2)", whiteSpace: "nowrap" }}
+                          onClick={() => setStreamMode(streamMode === 'direct' ? 'hls' : 'direct')}
+                          disabled={loading}
+                          title="Switch streaming engine override"
+                        >
+                          {streamMode === 'direct' ? 'Switch to HLS' : 'Switch to Direct'}
+                        </button>
                       </div>
                     </>
                     ) : (

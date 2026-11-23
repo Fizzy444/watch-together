@@ -10,7 +10,7 @@ export const desktopAPI = {
     return await invoke('select_video_file');
   },
 
-  startHostTunnel: async (filePath, streamMode = 'hls') => {
+  startHostTunnel: async (filePath, streamMode = 'auto') => {
     return await invoke('start_host_tunnel', { filePath, streamMode });
   },
 

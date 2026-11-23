@@ -361,13 +361,17 @@ pub async fn start_host_tunnel(
     let probe = probe_video_file(&file_path).await;
     let duration = probe.duration;
 
-    let selected_mode = stream_mode.unwrap_or_else(|| {
-        if ext == "mkv" {
-            "hls".to_string()
-        } else {
-            "direct".to_string()
+    let selected_mode = match stream_mode.as_deref() {
+        Some("direct") => "direct".to_string(),
+        Some("hls") => "hls".to_string(),
+        _ => {
+            if ext == "mkv" || ext == "avi" || ext == "mov" || probe.needs_video_transcode {
+                "hls".to_string()
+            } else {
+                "direct".to_string()
+            }
         }
-    });
+    };
 
     let mut subtitle_url: Option<String> = None;
     let mut is_hls = false;
