@@ -143,13 +143,14 @@ export default function Room() {
   const isP2P = !isTunnel && Boolean(room?.streamType === 'p2p' || room?.movie === 'p2p-stream');
   const isTorrent = !isTunnel && Boolean(room?.streamType === 'torrent');
 
-  // Precise host detection (User is host ONLY if matching hostId, creatorId, or user.isHost)
+  // Precise host detection (User is host if navigation state says so, or matching hostId, creatorId, or user.isHost)
   const isHost = Boolean(
-    room && (
+    location.state?.isHost ||
+    (room && (
       (room.hostId && room.hostId === myUserId) ||
       (room.creatorId && room.creatorId === myUserId) ||
       (room.users && room.users.find((u) => u.id === myUserId)?.isHost)
-    )
+    ))
   );
 
   // WebRTC Peer-to-Peer Engine

@@ -70,6 +70,7 @@ struct FfprobeOutput {
 struct ProbeResult {
     duration: f64,
     needs_video_transcode: bool,
+    needs_audio_transcode: bool,
 }
 
 async fn probe_video_file(file_path: &str) -> ProbeResult {
@@ -92,6 +93,7 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
             return ProbeResult {
                 duration: 0.0,
                 needs_video_transcode: false,
+                needs_audio_transcode: false,
             };
         }
     };
@@ -102,6 +104,7 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
             return ProbeResult {
                 duration: 0.0,
                 needs_video_transcode: false,
+                needs_audio_transcode: false,
             };
         }
     };
@@ -122,14 +125,29 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
         .into_iter()
         .collect();
 
+    let supported_audio: HashSet<&str> = ["aac", "mp3", "opus", "vorbis", "flac"]
+        .into_iter()
+        .collect();
+
     let needs_video_transcode = video_streams.first().map_or(false, |s| {
         let codec = s.codec_name.as_deref().unwrap_or("").to_lowercase();
         !supported_video.contains(codec.as_str())
     });
 
+    let audio_streams: Vec<_> = streams
+        .iter()
+        .filter(|s| s.codec_type.as_deref() == Some("audio"))
+        .collect();
+
+    let needs_audio_transcode = audio_streams.first().map_or(false, |s| {
+        let codec = s.codec_name.as_deref().unwrap_or("").to_lowercase();
+        !supported_audio.contains(codec.as_str())
+    });
+
     ProbeResult {
         duration,
         needs_video_transcode,
+        needs_audio_transcode,
     }
 }
 
@@ -360,12 +378,13 @@ pub async fn start_host_tunnel(
 
     let probe = probe_video_file(&file_path).await;
     let duration = probe.duration;
+    let needs_transcode = probe.needs_video_transcode || probe.needs_audio_transcode;
 
     let selected_mode = match stream_mode.as_deref() {
-        Some("direct") => "direct".to_string(),
         Some("hls") => "hls".to_string(),
+        Some("direct") if !needs_transcode => "direct".to_string(),
         _ => {
-            if ext == "mkv" || ext == "avi" || ext == "mov" || probe.needs_video_transcode {
+            if ext == "mkv" || ext == "avi" || ext == "mov" || needs_transcode {
                 "hls".to_string()
             } else {
                 "direct".to_string()
@@ -469,13 +488,25 @@ pub async fn start_host_tunnel(
                 }
             }),
         )
-        .nest_service("/video", video_service);
+        .route_service("/video", video_service.clone())
+        .route_service("/video/", video_service);
 
     if let Some(ref h_dir) = active_hls_dir {
         router = router.nest_service("/hls", ServeDir::new(h_dir));
     }
 
-    let server_app = router.layer(CorsLayer::permissive());
+    let cors = CorsLayer::permissive()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any)
+        .expose_headers([
+            axum::http::HeaderName::from_static("content-range"),
+            axum::http::HeaderName::from_static("accept-ranges"),
+            axum::http::HeaderName::from_static("content-length"),
+            axum::http::HeaderName::from_static("content-type"),
+        ]);
+
+    let server_app = router.layer(cors);
 
     tokio::spawn(async move {
         let _ = axum::serve(listener, server_app)
@@ -501,7 +532,7 @@ pub async fn start_host_tunnel(
             "--url",
             &format!("http://127.0.0.1:{local_port}"),
         ])
-        .stdout(Stdio::piped())
+        .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
     let mut cf_child = cf_cmd
@@ -525,7 +556,6 @@ pub async fn start_host_tunnel(
                 let mut lock = tx_ref.lock().await;
                 if let Some(tx) = lock.take() {
                     let _ = tx.send(url);
-                    break;
                 }
             }
             if line.contains("Error") || line.contains("error") {

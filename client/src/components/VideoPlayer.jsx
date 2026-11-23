@@ -60,12 +60,11 @@ const VideoPlayer = forwardRef(function VideoPlayer({
   const streamOffsetRef = useRef(0);
   const activeSubtitleTrackRef = useRef(null);
   const isHlsSource = Boolean(src && src.includes('.m3u8'));
-  const isLivePipeStream = !isHlsSource && (isLivePipe !== null
-    ? Boolean(isLivePipe)
-    : Boolean(src && src.includes('/video')));
+  const isLivePipeStream = false;
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [playbackError, setPlaybackError] = useState("");
 
   const effectiveDuration = (knownDuration && isFinite(knownDuration) && knownDuration > 0)
     ? knownDuration
@@ -396,11 +395,8 @@ const VideoPlayer = forwardRef(function VideoPlayer({
   const reloadLiveStreamAt = useCallback((targetTime, shouldPlay = true) => {
     const video = videoRef.current;
     if (!video || !src) return;
-    streamOffsetRef.current = targetTime;
+    video.currentTime = targetTime;
     setCurrentTime(targetTime);
-    const baseUrl = src.split('?')[0];
-    video.src = `${baseUrl}?start=${targetTime}&sessionId=${sessionIdRef.current}&_t=${Date.now()}`;
-    video.load();
     if (shouldPlay) {
       video.play().catch(() => {});
     }
@@ -467,13 +463,12 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         }
       });
     } else if (isHls && video.canPlayType('application/vnd.apple.mpegurl')) {
+      setPlaybackError("");
       video.src = src;
       video.load();
     } else {
-      const streamUrlWithSession = isLivePipeStream && !src.includes('sessionId=')
-        ? `${src}${src.includes('?') ? '&' : '?'}sessionId=${sessionIdRef.current}`
-        : src;
-      video.src = streamUrlWithSession;
+      setPlaybackError("");
+      video.src = src;
       video.load();
     }
 
@@ -483,7 +478,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         hlsRef.current = null;
       }
     };
-  }, [src, isLivePipeStream]);
+  }, [src]);
 
   // Refresh embedded subtitles from HTML5 video element
   const refreshEmbeddedTracks = useCallback(() => {
@@ -635,7 +630,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       const embedded = embeddedTracks.find((t) => t.id === trackId);
       if (embedded) {
         activeSubtitleTrackRef.current = embedded;
-        applySubtitleTrack(embedded, isLivePipeStream ? streamOffsetRef.current : 0);
+        applySubtitleTrack(embedded, 0);
         showHud({ icon: 'subtitles', text: embedded.label });
         return;
       }
@@ -645,11 +640,11 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       const sub = externalSubtitles.find((s) => s.id === trackId);
       if (sub) {
         activeSubtitleTrackRef.current = sub;
-        applySubtitleTrack(sub, isLivePipeStream ? streamOffsetRef.current : 0);
+        applySubtitleTrack(sub, 0);
         showHud({ icon: 'subtitles', text: sub.label });
       }
     }
-  }, [embeddedTracks, externalSubtitles, showHud, applySubtitleTrack, isLivePipeStream]);
+  }, [embeddedTracks, externalSubtitles, showHud, applySubtitleTrack]);
 
   // Load custom subtitle file
   const handleLoadCustomSubtitle = useCallback(async () => {
@@ -768,20 +763,15 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       }
       if (!hasInitializedTime.current) {
         if (pendingInitialTime.current > 0) {
-          if (isLivePipeStream) {
-            reloadLiveStreamAt(pendingInitialTime.current, pendingInitialPlaying.current);
-          } else {
-            video.currentTime = pendingInitialTime.current;
-            setCurrentTime(pendingInitialTime.current);
-          }
+          video.currentTime = pendingInitialTime.current;
+          setCurrentTime(pendingInitialTime.current);
         }
         hasInitializedTime.current = true;
         if (pendingInitialPlaying.current || wasPlayingBeforeDisconnect) {
           video.play()
             .then(() => {
               if (isHostRef.current) {
-                const currentAbsolute = isLivePipeStream ? streamOffsetRef.current + video.currentTime : video.currentTime;
-                onPlay?.(currentAbsolute);
+                onPlay?.(video.currentTime);
               }
             })
             .catch(() => {
@@ -794,9 +784,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
     };
 
     const onTU = () => {
-      const currentAbsolute = isLivePipeStream
-        ? streamOffsetRef.current + video.currentTime
-        : video.currentTime;
+      const currentAbsolute = video.currentTime;
       setCurrentTime(currentAbsolute);
 
       // If lagging viewer is catching up to host pause timestamp:
@@ -891,15 +879,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           const target = roomState.currentTime || 0;
           pendingInitialTime.current = target;
           pendingInitialPlaying.current = Boolean(roomState.playing);
-          if (isLivePipeStream) {
-            if (target > 0) {
-              reloadLiveStreamAt(target, roomState.playing);
-            }
-            hasInitializedTime.current = true;
-            if (roomState.playing) {
-              video.play().catch(() => {});
-            }
-          } else if (video.readyState >= 1) {
+          if (video.readyState >= 1) {
             if (target > 0) {
               video.currentTime = target;
               setCurrentTime(target);
@@ -918,24 +898,15 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         pendingPauseTarget.current = null;
         setHostReconnecting(false);
         if (isHostRef.current) break;
-        const currentAbsolute = isLivePipeStream ? streamOffsetRef.current + video.currentTime : video.currentTime;
+        const currentAbsolute = video.currentTime;
         const networkLatency = wsMsg.serverTime ? Math.max(0, (Date.now() - wsMsg.serverTime) / 1000 / 2) : 0;
         const targetTime = (wsMsg.position ?? currentAbsolute) + networkLatency;
 
-        if (isLivePipeStream) {
-          if (Math.abs(currentAbsolute - targetTime) > 3) {
-            reloadLiveStreamAt(targetTime, true);
-          } else {
-            video.playbackRate = 1.0;
-            video.play().catch((err) => console.log('[Playback] Auto-play blocked:', err));
-          }
-        } else {
-          if (Math.abs(video.currentTime - targetTime) > 3) {
-            video.currentTime = targetTime;
-          }
-          video.playbackRate = 1.0;
-          video.play().catch((err) => console.log('[Playback] Auto-play blocked:', err));
+        if (Math.abs(video.currentTime - targetTime) > 3) {
+          video.currentTime = targetTime;
         }
+        video.playbackRate = 1.0;
+        video.play().catch((err) => console.log('[Playback] Auto-play blocked:', err));
         break;
       }
 
@@ -946,7 +917,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         if (isHostRef.current) break;
 
         const targetPauseTime = typeof wsMsg.position === 'number' ? wsMsg.position : null;
-        const currentAbsolute = isLivePipeStream ? streamOffsetRef.current + video.currentTime : video.currentTime;
+        const currentAbsolute = video.currentTime;
         const CATCHUP_MAX_LAG = 10.0;
         const lag = targetPauseTime !== null ? (targetPauseTime - currentAbsolute) : 0;
 
@@ -960,11 +931,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
               const snap = pendingPauseTarget.current;
               pendingPauseTarget.current = null;
               videoRef.current.pause();
-              if (isLivePipeStream) {
-                reloadLiveStreamAt(snap, false);
-              } else {
-                videoRef.current.currentTime = snap;
-              }
+              videoRef.current.currentTime = snap;
             }
           }, Math.max(500, (lag + 1.5) * 1000));
         } else {
@@ -972,11 +939,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           pendingPauseTarget.current = null;
           video.pause();
           if (targetPauseTime !== null) {
-            if (isLivePipeStream) {
-              reloadLiveStreamAt(targetPauseTime, false);
-            } else {
-              video.currentTime = targetPauseTime;
-            }
+            video.currentTime = targetPauseTime;
           }
           video.playbackRate = 1.0;
         }
@@ -988,11 +951,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         pendingPauseTarget.current = null;
         if (isHostRef.current) break;
         const target = wsMsg.position ?? 0;
-        if (isLivePipeStream) {
-          reloadLiveStreamAt(target, !video.paused);
-        } else {
-          video.currentTime = target;
-        }
+        video.currentTime = target;
         video.playbackRate = 1.0;
         break;
       }
@@ -1002,17 +961,13 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         if (pendingPauseTarget.current !== null) break;
         if (video.seeking || video.readyState < 3) break;
 
-        const currentAbsolute = isLivePipeStream ? streamOffsetRef.current + video.currentTime : video.currentTime;
+        const currentAbsolute = video.currentTime;
         const networkLatency = wsMsg.serverTime ? Math.max(0, (Date.now() - wsMsg.serverTime) / 1000 / 2) : 0;
         const expected = (wsMsg.position ?? currentAbsolute) + networkLatency;
         const drift = expected - currentAbsolute;
 
         if (Math.abs(drift) > HARD_SEEK_THRESHOLD) {
-          if (isLivePipeStream) {
-            reloadLiveStreamAt(expected, true);
-          } else {
-            video.currentTime = expected;
-          }
+          video.currentTime = expected;
           video.playbackRate = 1.0;
         } else if (drift > CATCHUP_THRESHOLD) {
           video.playbackRate = 1.05;
@@ -1074,20 +1029,13 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       }
 
       const totalDur = effectiveDuration || (isFinite(video.duration) ? video.duration : 0);
-      const currentAbsolute = isLivePipeStream
-        ? streamOffsetRef.current + video.currentTime
-        : video.currentTime;
-      const target = Math.max(0, Math.min(totalDur, currentAbsolute + seconds));
+      const target = Math.max(0, Math.min(totalDur, video.currentTime + seconds));
 
-      if (isLivePipeStream) {
-        reloadLiveStreamAt(target, !video.paused);
-      } else {
-        if (isHlsSource && (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)) {
-          (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)(target).catch(() => {});
-        }
-        video.currentTime = target;
-        setCurrentTime(target);
+      if (isHlsSource && (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)) {
+        (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)(target).catch(() => {});
       }
+      video.currentTime = target;
+      setCurrentTime(target);
       onSeek?.(target);
 
       showHud({
@@ -1095,7 +1043,7 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         text: `${seconds > 0 ? '+' : ''}${seconds}s`,
       });
     },
-    [effectiveDuration, onSeek, showHud, isLivePipeStream, reloadLiveStreamAt, isHlsSource]
+    [effectiveDuration, onSeek, showHud, isHlsSource]
   );
 
   // Absolute seek from range slider
@@ -1104,18 +1052,14 @@ const VideoPlayer = forwardRef(function VideoPlayer({
       if (!isHostRef.current || !videoRef.current) return;
       const targetTime = Number(e.target.value);
       const video = videoRef.current;
-      if (isLivePipeStream) {
-        reloadLiveStreamAt(targetTime, !video.paused);
-      } else {
-        if (isHlsSource && (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)) {
-          (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)(targetTime).catch(() => {});
-        }
-        video.currentTime = targetTime;
-        setCurrentTime(targetTime);
+      if (isHlsSource && (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)) {
+        (window.desktopAPI?.seekHlsStream || window.electronAPI?.seekHlsStream)(targetTime).catch(() => {});
       }
+      video.currentTime = targetTime;
+      setCurrentTime(targetTime);
       onSeek?.(targetTime);
     },
-    [onSeek, isLivePipeStream, reloadLiveStreamAt, isHlsSource]
+    [onSeek, isHlsSource]
   );
 
   const toggleMute = useCallback(() => {
@@ -1253,15 +1197,20 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         preload="metadata"
         onClick={handlePlayPause}
         onError={(e) => {
-          console.warn("[VideoPlayer] Video element error event:", e.target?.error?.code, e.target?.error?.message);
-          // Only show a decode error if we actually set a real stream URL.
-          // The video element fires an error naturally when it has no src (empty src = MEDIA_ERR_SRC_NOT_SUPPORTED).
+          const code = e.target?.error?.code;
+          const message = e.target?.error?.message;
+          console.warn("[VideoPlayer] Video element error event:", code, message);
           if (isTorrent && torrentSrcSetRef.current) {
-            const code = e.target?.error?.code;
-            // MEDIA_ERR_SRC_NOT_SUPPORTED = 4 (unplayable format)
-            // MEDIA_ERR_DECODE = 3
             if (code === 4 || code === 3) {
               setTorrentError("Video decoding error: The video format inside this torrent cannot be played by the HTML5 video engine.");
+            }
+          } else if (src) {
+            if (code === 4) {
+              setPlaybackError("Format unsupported: The video container or codec cannot be decoded natively by this browser. Consider HLS mode.");
+            } else if (code === 3) {
+              setPlaybackError("Video decode error: The stream was corrupted or could not be decoded.");
+            } else if (code === 2) {
+              setPlaybackError("Network error: Could not reach video stream server.");
             }
           }
         }}
@@ -1372,6 +1321,46 @@ const VideoPlayer = forwardRef(function VideoPlayer({
           )}
         </div>
       ) : null}
+
+      {playbackError && !torrentError && (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 12,
+            background: "rgba(10, 10, 10, 0.95)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "14px",
+            padding: "32px",
+            textAlign: "center",
+          }}
+        >
+          <ShieldAlert size={42} color="#ef4444" />
+          <div style={{ fontSize: "1rem", fontWeight: 600, color: "#f87171", maxWidth: 500, lineHeight: 1.5 }}>
+            {playbackError}
+          </div>
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost"
+            style={{ fontSize: "0.8125rem", color: "var(--text-2)" }}
+            onClick={() => {
+              setPlaybackError("");
+              if (videoRef.current && src) {
+                videoRef.current.src = src;
+                videoRef.current.load();
+              }
+            }}
+          >
+            Retry Playback
+          </button>
+        </div>
+      )}
 
       {/* Host Reconnecting Banner (guests only) */}
       {hostReconnecting && !isHost && (
