@@ -723,6 +723,39 @@ svg.spin {
   pointer-events: auto !important;
 }
 
+.player-big-play-btn {
+  width: 68px;
+  height: 68px;
+  border-radius: var(--r-full);
+  background-color: rgba(0, 0, 0, 0.65);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: transform var(--t-fast), background-color var(--t-fast), border-color var(--t-fast);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.player-big-play-btn:hover {
+  transform: scale(1.08);
+  background-color: var(--primary);
+  border-color: var(--primary);
+}
+
+.player-big-play-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-big-play-btn {
+    transition: none;
+  }
+}
+
 .player-seek {
   width: 100%;
   height: 4px;

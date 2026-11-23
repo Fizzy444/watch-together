@@ -194,14 +194,16 @@ export default function Room() {
     };
   }, [localBlobUrl]);
 
-  // Stop host tunnel ONLY when navigating away from the room page completely
+  // Cleanup host tunnel when window is closed or refreshed (NOT on component unmount to prevent React StrictMode premature kill)
   useEffect(() => {
-    return () => {
-      window.electronAPI?.stopHostTunnel?.();
-      window.__hostLocalStreamUrl = null;
-      window.__hostSubtitleUrl = null;
+    const handleBeforeUnload = () => {
+      if (isHost && isTunnel) {
+        window.electronAPI?.stopHostTunnel?.();
+      }
     };
-  }, []);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isHost, isTunnel]);
 
   useEffect(() => {
     const unsubscribe = window.desktopAPI?.onTunnelStatus?.((status) => {
@@ -241,14 +243,23 @@ export default function Room() {
     addToast('Local stream failed; switched to the tunnel URL.', 'info');
   }
 
+  const handleLeaveRoom = useCallback(() => {
+    if (isHost && isTunnel) {
+      window.electronAPI?.stopHostTunnel?.();
+      window.__hostLocalStreamUrl = null;
+      window.__hostSubtitleUrl = null;
+    }
+    navigate('/dashboard');
+  }, [isHost, isTunnel, navigate]);
+
   // Auto-redirect if room was closed
   useEffect(() => {
     if (!isRoomClosed) return;
     const timer = setTimeout(() => {
-      navigate('/dashboard');
+      handleLeaveRoom();
     }, 3500);
     return () => clearTimeout(timer);
-  }, [isRoomClosed, navigate]);
+  }, [isRoomClosed, handleLeaveRoom]);
 
   async function handleCloseRoom() {
     setClosing(true);
@@ -397,7 +408,7 @@ export default function Room() {
         <AlertTriangle size={48} color="var(--error)" style={{ marginBottom: 'var(--sp-4)' }} />
         <h2 style={{ marginBottom: 'var(--sp-2)' }}>{error}</h2>
         <p style={{ marginBottom: 'var(--sp-6)' }}>The session may have ended or the URL is invalid.</p>
-        <button className="btn btn-secondary" onClick={() => navigate('/dashboard')}>
+        <button className="btn btn-secondary" onClick={handleLeaveRoom}>
           Return to Library
         </button>
       </div>
@@ -494,7 +505,7 @@ export default function Room() {
         <div className="room-topbar-left">
           <button
             className="btn btn-ghost btn-sm room-topbar-back"
-            onClick={() => navigate('/dashboard')}
+            onClick={handleLeaveRoom}
             title="Return to Dashboard"
           >
             <ArrowLeft size={18} />
@@ -622,7 +633,7 @@ export default function Room() {
           ) : (
             <button
               className="btn btn-ghost btn-sm room-topbar-btn"
-              onClick={() => navigate('/dashboard')}
+              onClick={handleLeaveRoom}
               title="Leave Room"
             >
               <ArrowLeft size={14} />
@@ -962,7 +973,7 @@ export default function Room() {
             </p>
             <button
               className="btn btn-primary"
-              onClick={() => navigate('/dashboard')}
+              onClick={handleLeaveRoom}
               style={{ width: '100%', justifyContent: 'center' }}
             >
               Return to Home

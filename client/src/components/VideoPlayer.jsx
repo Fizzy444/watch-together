@@ -1393,6 +1393,55 @@ const VideoPlayer = forwardRef(function VideoPlayer({
         </div>
       )}
 
+      {/* Central Play Overlay (When paused and ready) */}
+      {!playing && !buffering && !playbackError && !torrentError && (src || streamObject) && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 6,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 'var(--sp-2)',
+            pointerEvents: isHost ? 'auto' : 'none',
+          }}
+        >
+          {isHost ? (
+            <button
+              type="button"
+              className="player-big-play-btn"
+              onClick={handlePlayPause}
+              aria-label="Start playback"
+              title="Click to play video"
+            >
+              <Play size={32} fill="#ffffff" style={{ marginLeft: '4px' }} />
+            </button>
+          ) : (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 16px',
+                borderRadius: 'var(--r-full)',
+                backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                backdropFilter: 'blur(8px)',
+                color: 'var(--text-2)',
+                fontSize: '0.8125rem',
+                fontWeight: 500,
+              }}
+            >
+              <Pause size={14} />
+              <span>Paused by host</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Buffering Spinner */}
       {buffering && (
         <div
