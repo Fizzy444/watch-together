@@ -606,14 +606,16 @@ export default function Room() {
         <div className="room-topbar-right">
           {/* Profile Badge with dropdown */}
           {userName && (
-            <ProfileBadge
-              name={userName}
-              onEdit={() => setIsProfileModalOpen(true)}
-              onClear={() => {
-                setUserName('');
-                setHasJoined(false);
-              }}
-            />
+            <div className="room-topbar-profile">
+              <ProfileBadge
+                name={userName}
+                onEdit={() => setIsProfileModalOpen(true)}
+                onClear={() => {
+                  setUserName('');
+                  setHasJoined(false);
+                }}
+              />
+            </div>
           )}
 
           {/* Invite Link Button */}
@@ -625,13 +627,13 @@ export default function Room() {
             aria-label="Copy invite link"
           >
             {copiedLink ? <Check size={14} color="var(--success)" /> : <Link2 size={14} />}
-            <span className="room-topbar-btn-label">{copiedLink ? 'Copied!' : 'Invite Link'}</span>
+            <span className="room-topbar-btn-label">{copiedLink ? 'Copied!' : 'Invite'}</span>
           </button>
 
           {/* Toggle Sidebar Button (Cinema Mode) */}
           <button
             type="button"
-            className={`btn btn-sm room-topbar-btn ${sidebarOpen ? "btn-ghost" : "btn-secondary"}`}
+            className={`btn btn-sm room-topbar-btn room-topbar-sidebar-toggle ${sidebarOpen ? "btn-ghost" : "btn-secondary"}`}
             onClick={toggleSidebar}
             title={sidebarOpen ? 'Collapse sidebar (Cinema Mode)' : 'Show Chat & Members'}
             aria-label={sidebarOpen ? 'Hide chat' : 'Show chat'}

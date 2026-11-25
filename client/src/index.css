@@ -1601,34 +1601,39 @@ svg.spin {
 
   .room-topbar {
     order: 2;
-    flex: 0 0 44px;
-    height: 44px;
-    padding: 0 max(var(--sp-2), env(safe-area-inset-right, 8px)) 0 max(var(--sp-2), env(safe-area-inset-left, 8px));
+    flex: 0 0 42px;
+    height: 42px;
+    padding: 0 max(var(--sp-3), env(safe-area-inset-right, 12px)) 0 max(var(--sp-3), env(safe-area-inset-left, 12px));
     gap: var(--sp-2);
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
+  }
+
+  .room-topbar-back,
+  .room-topbar-titles,
+  .room-topbar-status-text,
+  .room-topbar-role-badge,
+  .room-topbar-profile,
+  .room-topbar-sidebar-toggle,
+  .sidebar-collapse-btn,
+  .sidebar-shortcuts-btn {
+    display: none !important;
   }
 
   .room-topbar-left {
     gap: var(--sp-2);
   }
 
-  .room-topbar-title {
-    max-width: 150px;
-    font-size: 0.875rem !important;
-  }
-
-  .room-topbar-subtitle,
-  .room-topbar-status-text {
-    display: none !important;
+  .room-topbar-right {
+    gap: var(--sp-2);
   }
 
   .room-topbar-btn {
-    min-height: 36px;
+    min-height: 32px;
     min-width: 36px;
     padding: 0 10px;
     font-size: 0.75rem;
-    gap: 4px;
+    gap: 5px;
   }
 
   .room-sidebar {
@@ -1673,22 +1678,6 @@ svg.spin {
 
   .home-header-actions .btn-primary {
     min-height: 40px;
-  }
-
-  .room-topbar-role-badge,
-  .room-topbar-btn-label,
-  .room-topbar .profile-badge-name {
-    display: none !important;
-  }
-
-  .room-topbar .profile-badge-btn {
-    padding: 4px 6px 4px 4px;
-    gap: 4px;
-  }
-
-  .room-topbar-btn {
-    min-width: 38px;
-    padding: 0 8px;
   }
 
   .home-search-bar {
@@ -1783,32 +1772,31 @@ svg.spin {
 @media (max-width: 960px) and (max-height: 540px) and (orientation: landscape) {
   .room-topbar {
     order: 0;
-    flex: 0 0 40px;
-    height: 40px;
+    flex: 0 0 38px;
+    height: 38px;
     padding: 0 max(var(--sp-2), env(safe-area-inset-right, 8px)) 0 max(var(--sp-2), env(safe-area-inset-left, 8px));
     gap: var(--sp-2);
     border-top: none;
     border-bottom: 1px solid var(--border);
   }
 
-  .room-topbar-subtitle,
+  .room-topbar-back,
+  .room-topbar-titles,
   .room-topbar-status-text,
   .room-topbar-role-badge,
-  .room-topbar-btn-label,
-  .room-topbar .profile-badge-name {
+  .room-topbar-profile,
+  .room-topbar-sidebar-toggle,
+  .sidebar-collapse-btn,
+  .sidebar-shortcuts-btn {
     display: none !important;
   }
 
-  .room-topbar-title {
-    max-width: 180px;
-    font-size: 0.8125rem !important;
-  }
-
   .room-topbar-btn {
-    height: 30px;
-    min-height: 30px;
+    height: 28px;
+    min-height: 28px;
     min-width: 32px;
-    padding: 0 8px;
+    padding: 0 10px;
+    font-size: 0.75rem;
   }
 
   .layout-room {

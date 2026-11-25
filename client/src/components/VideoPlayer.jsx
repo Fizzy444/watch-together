@@ -870,12 +870,17 @@ const VideoPlayer = forwardRef(function VideoPlayer(
 
     const enterLandscapeOnMobile = async () => {
       if (!isMobileTouch()) return;
-      try {
-        if (screen.orientation?.lock) {
-          await screen.orientation.lock('landscape');
+      if (screen.orientation?.lock) {
+        try {
+          await screen.orientation.lock('landscape-secondary');
           return;
+        } catch {
+          try {
+            await screen.orientation.lock('landscape');
+            return;
+          } catch {}
         }
-      } catch {}
+      }
       applyPortraitRotateFallback();
     };
 
