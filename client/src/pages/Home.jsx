@@ -1,10 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getActiveRooms } from '../api/index.js';
 import { getProfileName } from '../utils/profile.js';
-import CreateRoomModal from '../components/CreateRoomModal.jsx';
 import ProfileBadge from '../components/ProfileBadge.jsx';
-import ProfileModal from '../components/ProfileModal.jsx';
 import {
   PlaySquare,
   Plus,
@@ -14,10 +12,18 @@ import {
   Radio,
   Loader2,
   ArrowRight,
-  Info,
-  Zap,
   Globe,
+  Zap,
 } from 'lucide-react';
+
+const CreateRoomModal = lazy(() => import('../components/CreateRoomModal.jsx'));
+const ProfileModal = lazy(() => import('../components/ProfileModal.jsx'));
+
+const STREAM_TYPE_META = {
+  tunnel: { label: 'Tunnel', className: 'badge badge-info', Icon: Globe },
+  torrent: { label: 'Torrent', className: 'badge badge-host', Icon: Radio },
+  p2p: { label: 'P2P', className: 'badge badge-warning', Icon: Zap },
+};
 
 export default function Home() {
   const navigate = useNavigate();
@@ -28,11 +34,9 @@ export default function Home() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Search & quick join states
   const [searchQuery, setSearchQuery] = useState('');
   const [directCode, setDirectCode] = useState('');
 
-  // Fetch active rooms list
   const fetchRooms = useCallback(async () => {
     try {
       const data = await getActiveRooms();
@@ -46,25 +50,33 @@ export default function Home() {
 
   useEffect(() => {
     fetchRooms();
-    const interval = setInterval(fetchRooms, 3500);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchRooms();
+      }
+    }, 4000);
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        fetchRooms();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [fetchRooms]);
 
-  // Filtered rooms based on search
   const filteredRooms = activeRooms.filter((r) => {
-    const q = searchQuery.toLowerCase().trim();
-    if (!q) return true;
+    const query = searchQuery.toLowerCase().trim();
+    if (!query) return true;
     return (
-      (r.name && r.name.toLowerCase().includes(q)) ||
-      (r.movieName && r.movieName.toLowerCase().includes(q)) ||
-      (r.hostName && r.hostName.toLowerCase().includes(q)) ||
-      r.id.toLowerCase().includes(q)
+      (r.name && r.name.toLowerCase().includes(query)) ||
+      (r.movieName && r.movieName.toLowerCase().includes(query)) ||
+      (r.hostName && r.hostName.toLowerCase().includes(query)) ||
+      r.id.toLowerCase().includes(query)
     );
   });
-
-  function handleOpenCreateModal() {
-    setIsModalOpen(true);
-  }
 
   function handleJoinRoom(roomId) {
     navigate(`/watch/${roomId}`, { state: { fromDashboard: Boolean(profileName) } });
@@ -79,84 +91,19 @@ export default function Home() {
   }
 
   return (
-    <div className="container" style={{ paddingBottom: 'var(--sp-12)' }}>
-      {/* Top Header */}
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: 'var(--sp-6) 0 var(--sp-8)',
-          borderBottom: '1px solid var(--border)',
-          marginBottom: 'var(--sp-8)',
-          flexWrap: 'wrap',
-          gap: 'var(--sp-4)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)' }}>
-          <div
-            style={{
-              width: 42,
-              height: 42,
-              borderRadius: 'var(--r-md)',
-              background: 'linear-gradient(135deg, var(--primary) 0%, #a855f7 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 4px 14px rgba(99, 102, 241, 0.4)',
-              cursor: 'pointer',
-            }}
-            onClick={() => navigate('/')}
-          >
-            <PlaySquare size={22} color="#fff" />
+    <div className="container home-page">
+      <header className="home-header">
+        <div className="home-brand">
+          <div className="home-brand-icon">
+            <PlaySquare size={20} color="#fff" />
           </div>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
-              <h1
-                style={{
-                  fontSize: '1.25rem',
-                  fontWeight: 700,
-                  letterSpacing: '-0.02em',
-                  margin: 0,
-                  cursor: 'pointer',
-                }}
-                onClick={() => navigate('/')}
-              >
-                Watch Together
-              </h1>
-              <span
-                style={{
-                  fontSize: '0.6875rem',
-                  padding: '2px 8px',
-                  borderRadius: 'var(--r-full)',
-                  background: 'rgba(234, 179, 8, 0.12)',
-                  color: '#eab308',
-                  border: '1px solid rgba(234, 179, 8, 0.25)',
-                  fontWeight: 600,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 3,
-                }}
-              >
-                <Zap size={10} />
-                P2P
-              </span>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => navigate('/')}
-                style={{ fontSize: '0.75rem', color: 'var(--text-3)', padding: '2px 8px' }}
-              >
-                <Info size={13} style={{ marginRight: 4 }} /> About
-              </button>
-            </div>
-            <p style={{ fontSize: '0.8125rem', color: 'var(--text-3)', margin: 0 }}>
-              Direct device-to-device synchronized video streaming
-            </p>
+            <h1 className="home-brand-title">Watch Together</h1>
+            <p className="home-brand-subtitle">Synchronized local, tunnel, and P2P playback</p>
           </div>
         </div>
 
-        {/* Header Right Actions: Profile + Create Room */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
+        <div className="home-header-actions">
           {profileName ? (
             <ProfileBadge
               name={profileName}
@@ -165,9 +112,9 @@ export default function Home() {
             />
           ) : (
             <button
+              type="button"
               className="btn btn-secondary btn-sm"
               onClick={() => setIsProfileModalOpen(true)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
             >
               <User size={14} />
               <span>Set Username</span>
@@ -175,104 +122,68 @@ export default function Home() {
           )}
 
           <button
+            type="button"
             className="btn btn-primary"
-            onClick={() => handleOpenCreateModal()}
-            style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}
+            onClick={() => setIsModalOpen(true)}
           >
             <Plus size={16} />
-            Create Room
+            <span>Create Room</span>
           </button>
         </div>
       </header>
 
-      {/* Main Content */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-8)' }}>
-        {/* Quick Search & Join Bar */}
-        <section
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 'var(--sp-3)',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: 'var(--bg-card)',
-            padding: 'var(--sp-4)',
-            borderRadius: 'var(--r-md)',
-            border: '1px solid var(--border)',
-          }}
-        >
-          {/* Room Search input */}
-          <div style={{ position: 'relative', flex: '1 1 280px' }}>
-            <Search
-              size={16}
-              style={{
-                position: 'absolute',
-                left: 12,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-3)',
-              }}
-            />
+      <main className="home-stack">
+        <section className="home-search-bar" aria-label="Find or join a room">
+          <div className="home-search-field">
+            <Search size={16} className="home-search-icon" />
             <input
               type="text"
               className="input input-sm"
-              placeholder="Search active rooms by name..."
+              placeholder="Search active rooms..."
+              aria-label="Search active rooms"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ paddingLeft: 36, width: '100%' }}
+              style={{ paddingLeft: 36 }}
             />
           </div>
 
-          {/* Direct Code Join Form */}
-          <form
-            onSubmit={handleDirectJoin}
-            className="home-direct-join-form"
-            style={{ display: 'flex', gap: 'var(--sp-2)', flex: '0 0 auto' }}
-          >
+          <form onSubmit={handleDirectJoin} className="home-direct-join-form">
             <input
               type="text"
               className="input input-sm"
-              placeholder="Enter Room Code..."
+              placeholder="Room code"
+              aria-label="Room code"
               value={directCode}
               onChange={(e) => setDirectCode(e.target.value)}
-              style={{ width: 160, fontFamily: 'monospace' }}
+              style={{ width: 150, fontFamily: 'monospace' }}
             />
             <button
               type="submit"
               className="btn btn-secondary btn-sm"
               disabled={!directCode.trim()}
-              title="Join private room"
+              title="Join room by code"
             >
-              <ArrowRight size={14} /> Join
+              <ArrowRight size={14} />
+              <span>Join</span>
             </button>
           </form>
         </section>
 
-        {/* Section: Active Rooms */}
         <section>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: 'var(--sp-4)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+          <div className="home-section-header">
+            <div className="home-section-title">
               <Radio size={16} color="var(--success)" />
-              <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Active Rooms</h3>
+              <h2>Active Rooms</h2>
               {!loadingRooms && activeRooms.length > 0 && (
-                <span className="badge" style={{ borderColor: 'rgba(34, 197, 94, 0.3)', color: 'var(--success)' }}>
-                  {activeRooms.length} live
-                </span>
+                <span className="badge badge-success">{activeRooms.length} live</span>
               )}
             </div>
 
             {searchQuery && (
               <button
+                type="button"
                 className="btn btn-ghost btn-sm"
                 onClick={() => setSearchQuery('')}
-                style={{ fontSize: '0.75rem', color: 'var(--text-3)' }}
               >
                 Clear filter
               </button>
@@ -284,175 +195,91 @@ export default function Home() {
               <Loader2 className="spinner" size={24} />
             </div>
           ) : filteredRooms.length === 0 ? (
-            <div
-              className="card"
-              style={{
-                padding: 'var(--sp-10) var(--sp-6)',
-                textAlign: 'center',
-                color: 'var(--text-2)',
-                background: 'var(--bg-card)',
-              }}
-            >
-              <div
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: '50%',
-                  background: 'rgba(99, 102, 241, 0.1)',
-                  color: 'var(--primary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  margin: '0 auto var(--sp-3)',
-                }}
-              >
-                <Zap size={28} />
+            <div className="card home-empty-state">
+              <div className="home-empty-icon">
+                <Film size={22} />
               </div>
-              <p style={{ fontWeight: 600, color: 'var(--text-1)', fontSize: '1.0625rem', marginBottom: 'var(--sp-1)' }}>
-                {searchQuery ? 'No rooms match your search' : 'No active rooms right now'}
+              <p style={{ fontWeight: 600, color: 'var(--text-1)', fontSize: '1rem' }}>
+                {searchQuery ? 'No rooms match your search' : 'No active rooms'}
               </p>
-              <p style={{ fontSize: '0.875rem', color: 'var(--text-3)', maxWidth: 440, margin: '0 auto var(--sp-5)' }}>
-                Start a private watch party! Choose any local video file from your computer or phone and stream directly to your friends with 0 server uploads.
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-3)', maxWidth: 400 }}>
+                Create a room to stream a video file or magnet link in sync with others.
               </p>
-              <button className="btn btn-primary" onClick={() => handleOpenCreateModal()}>
-                <Plus size={16} /> Create Watch Room
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => setIsModalOpen(true)}
+              >
+                <Plus size={16} />
+                <span>Create Room</span>
               </button>
             </div>
           ) : (
             <div className="rooms-grid">
-              {filteredRooms.map((r) => (
-                <div key={r.id} className="room-card">
-                  <div className="room-card-header">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                      <span className="room-card-title" title={r.name}>
-                        {r.name}
+              {filteredRooms.map((r) => {
+                const typeKey = r.streamType === 'tunnel' ? 'tunnel' : r.streamType === 'torrent' ? 'torrent' : 'p2p';
+                const meta = STREAM_TYPE_META[typeKey];
+                const TypeIcon = meta.Icon;
+
+                return (
+                  <div key={r.id} className="room-card">
+                    <div className="room-card-header">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                        <span className="room-card-title" title={r.name}>
+                          {r.name}
+                        </span>
+                        <span className={`${meta.className} badge-compact`} style={{ flexShrink: 0 }}>
+                          <TypeIcon size={9} />
+                          <span>{meta.label}</span>
+                        </span>
+                      </div>
+                      <span
+                        className="status-indicator"
+                        style={r.usersCount === 0 ? { color: 'var(--warning)' } : undefined}
+                      >
+                        {r.usersCount === 0
+                          ? 'Empty'
+                          : `${r.usersCount} ${r.usersCount === 1 ? 'member' : 'members'}`}
                       </span>
-                      {r.streamType === 'tunnel' ? (
-                        <span
-                          className="badge"
-                          style={{
-                            background: 'rgba(59, 130, 246, 0.12)',
-                            color: '#60a5fa',
-                            border: '1px solid rgba(59, 130, 246, 0.3)',
-                            fontSize: '0.625rem',
-                            padding: '1px 5px',
-                            flexShrink: 0,
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 3,
-                          }}
-                        >
-                          <Globe size={9} />
-                          Tunnel
-                        </span>
-                      ) : r.streamType === 'torrent' ? (
-                        <span
-                          className="badge"
-                          style={{
-                            background: 'rgba(168, 85, 247, 0.12)',
-                            color: '#c084fc',
-                            border: '1px solid rgba(168, 85, 247, 0.3)',
-                            fontSize: '0.625rem',
-                            padding: '1px 5px',
-                            flexShrink: 0,
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 3,
-                          }}
-                        >
-                          <Radio size={9} />
-                          Torrent
-                        </span>
-                      ) : (
-                        <span
-                          className="badge"
-                          style={{
-                            background: 'rgba(234, 179, 8, 0.12)',
-                            color: '#eab308',
-                            border: '1px solid rgba(234, 179, 8, 0.3)',
-                            fontSize: '0.625rem',
-                            padding: '1px 5px',
-                            flexShrink: 0,
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 3,
-                          }}
-                        >
-                          <Zap size={9} />
-                          P2P
-                        </span>
-                      )}
                     </div>
-                    <span
-                      className="status-indicator"
-                      style={r.usersCount === 0 ? { color: '#f59e0b', fontSize: '0.75rem' } : undefined}
-                    >
-                      {r.usersCount === 0 ? 'Empty (closing soon)' : `${r.usersCount} ${r.usersCount === 1 ? 'member' : 'members'}`}
-                    </span>
-                  </div>
 
-                  <div className="room-card-movie" title={r.movieName}>
-                    <Film size={14} style={{ flexShrink: 0 }} />
-                    <span>{r.movieName}</span>
-                  </div>
+                    <div className="room-card-movie" title={r.movieName}>
+                      <Film size={14} style={{ flexShrink: 0 }} />
+                      <span>{r.movieName}</span>
+                    </div>
 
-                  <div className="room-card-meta">
-                    <span>Host: {r.hostName}</span>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => handleJoinRoom(r.id)}
-                      style={{ padding: '0 var(--sp-3)' }}
-                    >
-                      Join <ArrowRight size={13} style={{ marginLeft: 4 }} />
-                    </button>
+                    <div className="room-card-meta">
+                      <span>Host: {r.hostName}</span>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => handleJoinRoom(r.id)}
+                      >
+                        <span>Join</span>
+                        <ArrowRight size={13} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
+      </main>
 
-        {/* Fast Action Card */}
-        <section
-          style={{
-            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.04) 100%)',
-            border: '1px solid rgba(99, 102, 241, 0.25)',
-            borderRadius: 'var(--r-lg)',
-            padding: 'var(--sp-6)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 'var(--sp-4)',
-          }}
-        >
-          <div>
-            <h4 style={{ margin: '0 0 var(--sp-1) 0', fontSize: '1rem', fontWeight: 600, color: 'var(--text-1)' }}>
-              Stream Directly From Your Device
-            </h4>
-            <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--text-2)' }}>
-              No upload waiting time. Pick any local MP4, MKV, WebM, or MOV file and watch together in real time.
-            </p>
-          </div>
-          <button className="btn btn-primary btn-sm" onClick={() => handleOpenCreateModal()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Zap size={14} /> Start P2P Broadcast
-          </button>
-        </section>
-      </div>
-
-      {/* Create Room Modal */}
-      <CreateRoomModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-      />
-
-      {/* Profile Modal */}
-      <ProfileModal
-        isOpen={isProfileModalOpen}
-        onClose={() => setIsProfileModalOpen(false)}
-        currentName={profileName}
-        onSave={(newName) => setProfileName(newName)}
-      />
+      <Suspense fallback={null}>
+        {isModalOpen && (
+          <CreateRoomModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
+        )}
+        {isProfileModalOpen && (
+          <ProfileModal
+            isOpen={isProfileModalOpen}
+            onClose={() => setIsProfileModalOpen(false)}
+            currentName={profileName}
+            onSave={(newName) => setProfileName(newName)}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

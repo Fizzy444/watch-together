@@ -1,7 +1,8 @@
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::header::{
-    ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderName, HeaderValue,
+    ACCEPT_RANGES, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderName,
+    HeaderValue,
 };
 use axum::http::Response;
 use axum::middleware::Next;
@@ -21,6 +22,31 @@ use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+pub struct AudioTrackInfo {
+    pub id: u32,
+    pub stream_index: u32,
+    pub codec_name: String,
+    pub language: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub is_default: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SubtitleTrackInfo {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_index: Option<u32>,
+    pub language: String,
+    pub label: String,
+    pub url: String,
+    pub is_default: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct VideoFileInfo {
     pub file_path: String,
     pub name: String,
@@ -32,6 +58,8 @@ pub struct VideoFileInfo {
     pub reason: String,
     pub needs_transcode: bool,
     pub needs_faststart: bool,
+    pub audio_tracks: Vec<AudioTrackInfo>,
+    pub subtitle_tracks: Vec<SubtitleTrackInfo>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -47,6 +75,8 @@ pub struct TunnelResult {
     pub stream_mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subtitle_url: Option<String>,
+    pub subtitle_tracks: Vec<SubtitleTrackInfo>,
+    pub audio_tracks: Vec<AudioTrackInfo>,
 }
 
 #[derive(Default)]
@@ -70,8 +100,11 @@ struct FfprobeFormat {
 
 #[derive(Deserialize, Debug)]
 struct FfprobeStream {
+    index: Option<u32>,
     codec_type: Option<String>,
     codec_name: Option<String>,
+    tags: Option<serde_json::Value>,
+    disposition: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -84,6 +117,8 @@ struct ProbeResult {
     duration: f64,
     needs_video_transcode: bool,
     needs_audio_transcode: bool,
+    audio_tracks: Vec<AudioTrackInfo>,
+    subtitle_streams: Vec<SubtitleTrackInfo>,
 }
 
 async fn probe_video_file(file_path: &str) -> ProbeResult {
@@ -92,7 +127,7 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
             "-v",
             "error",
             "-show_entries",
-            "format=duration:stream=index,codec_type,codec_name",
+            "format=duration:stream=index,codec_type,codec_name:stream_tags=language,title:stream_disposition=default",
             "-of",
             "json",
             file_path,
@@ -107,6 +142,8 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
                 duration: 0.0,
                 needs_video_transcode: false,
                 needs_audio_transcode: false,
+                audio_tracks: Vec::new(),
+                subtitle_streams: Vec::new(),
             };
         }
     };
@@ -118,6 +155,8 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
                 duration: 0.0,
                 needs_video_transcode: false,
                 needs_audio_transcode: false,
+                audio_tracks: Vec::new(),
+                subtitle_streams: Vec::new(),
             };
         }
     };
@@ -145,20 +184,122 @@ async fn probe_video_file(file_path: &str) -> ProbeResult {
         !supported_video.contains(codec.as_str())
     });
 
-    let audio_streams: Vec<_> = streams
-        .iter()
-        .filter(|s| s.codec_type.as_deref() == Some("audio"))
-        .collect();
+    let mut audio_tracks = Vec::new();
+    let mut audio_counter = 0;
 
-    let needs_audio_transcode = audio_streams.first().map_or(false, |s| {
-        let codec = s.codec_name.as_deref().unwrap_or("").to_lowercase();
-        !supported_audio.contains(codec.as_str())
+    for s in streams.iter().filter(|s| s.codec_type.as_deref() == Some("audio")) {
+        let stream_index = s.index.unwrap_or(audio_counter);
+        let codec = s.codec_name.as_deref().unwrap_or("unknown").to_lowercase();
+        let lang = s
+            .tags
+            .as_ref()
+            .and_then(|t| t.get("language").or_else(|| t.get("LANGUAGE")))
+            .and_then(|v| v.as_str())
+            .unwrap_or("und")
+            .to_string();
+
+        let title = s
+            .tags
+            .as_ref()
+            .and_then(|t| t.get("title").or_else(|| t.get("TITLE")))
+            .and_then(|v| v.as_str())
+            .map(|st| st.to_string());
+
+        let is_default = s
+            .disposition
+            .as_ref()
+            .and_then(|d| d.get("default"))
+            .and_then(|v| v.as_i64())
+            .map(|v| v == 1)
+            .unwrap_or(audio_counter == 0);
+
+        let label = if let Some(ref t) = title {
+            if lang != "und" {
+                format!("{t} ({})", lang.to_uppercase())
+            } else {
+                t.clone()
+            }
+        } else if lang != "und" {
+            format!("Audio Track {} ({})", audio_counter + 1, lang.to_uppercase())
+        } else {
+            format!("Audio Track {}", audio_counter + 1)
+        };
+
+        audio_tracks.push(AudioTrackInfo {
+            id: audio_counter,
+            stream_index,
+            codec_name: codec,
+            language: lang,
+            label,
+            title,
+            is_default,
+        });
+
+        audio_counter += 1;
+    }
+
+    let mut subtitle_streams = Vec::new();
+    let mut sub_counter = 0;
+
+    for s in streams.iter().filter(|s| s.codec_type.as_deref() == Some("subtitle")) {
+        let stream_index = s.index.unwrap_or(sub_counter);
+        let lang = s
+            .tags
+            .as_ref()
+            .and_then(|t| t.get("language").or_else(|| t.get("LANGUAGE")))
+            .and_then(|v| v.as_str())
+            .unwrap_or("und")
+            .to_string();
+
+        let title = s
+            .tags
+            .as_ref()
+            .and_then(|t| t.get("title").or_else(|| t.get("TITLE")))
+            .and_then(|v| v.as_str())
+            .map(|st| st.to_string());
+
+        let is_default = s
+            .disposition
+            .as_ref()
+            .and_then(|d| d.get("default"))
+            .and_then(|v| v.as_i64())
+            .map(|v| v == 1)
+            .unwrap_or(sub_counter == 0);
+
+        let label = if let Some(ref t) = title {
+            if lang != "und" {
+                format!("{t} ({})", lang.to_uppercase())
+            } else {
+                t.clone()
+            }
+        } else if lang != "und" {
+            format!("Subtitle {} ({})", sub_counter + 1, lang.to_uppercase())
+        } else {
+            format!("Subtitle {}", sub_counter + 1)
+        };
+
+        subtitle_streams.push(SubtitleTrackInfo {
+            id: format!("sub-{sub_counter}"),
+            stream_index: Some(stream_index),
+            language: lang,
+            label,
+            url: String::new(),
+            is_default,
+        });
+
+        sub_counter += 1;
+    }
+
+    let needs_audio_transcode = audio_tracks.iter().any(|t| {
+        !supported_audio.contains(t.codec_name.as_str())
     });
 
     ProbeResult {
         duration,
         needs_video_transcode,
         needs_audio_transcode,
+        audio_tracks,
+        subtitle_streams,
     }
 }
 
@@ -190,6 +331,7 @@ fn resolve_cloudflared_binary() -> PathBuf {
 }
 
 async fn allow_private_network(request: Request<Body>, next: Next) -> Response<Body> {
+    let uri_path = request.uri().path().to_lowercase();
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     headers.insert(
@@ -200,6 +342,24 @@ async fn allow_private_network(request: Request<Body>, next: Next) -> Response<B
         HeaderName::from_static("access-control-allow-origin"),
         HeaderValue::from_static("*"),
     );
+
+    if uri_path.ends_with(".ts") || uri_path.ends_with(".m4s") {
+        headers.insert(
+            CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    } else if uri_path.ends_with(".m3u8") {
+        headers.insert(
+            CACHE_CONTROL,
+            HeaderValue::from_static("no-cache, no-store, must-revalidate"),
+        );
+    } else if uri_path.ends_with(".vtt") {
+        headers.insert(
+            CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=86400"),
+        );
+    }
+
     response
 }
 
@@ -241,6 +401,22 @@ pub async fn select_video_file() -> Result<Option<VideoFileInfo>, String> {
         ("hls".to_string(), "Video codec requires transcoding to H.264".to_string())
     } else if probe.needs_audio_transcode {
         ("hls".to_string(), "Audio track requires transcoding to AAC".to_string())
+    } else if probe.audio_tracks.len() > 1 {
+        (
+            "hls".to_string(),
+            format!(
+                "Multiple audio tracks detected ({} tracks) — HLS engine enabled for audio language switching",
+                probe.audio_tracks.len()
+            ),
+        )
+    } else if probe.subtitle_streams.len() > 1 {
+        (
+            "hls".to_string(),
+            format!(
+                "Multiple subtitle tracks detected ({} tracks) — HLS engine enabled for multi-language subtitles",
+                probe.subtitle_streams.len()
+            ),
+        )
     } else if needs_faststart {
         ("hls".to_string(), "MP4 metadata is at end of file (HLS recommended for instant start)".to_string())
     } else {
@@ -258,6 +434,8 @@ pub async fn select_video_file() -> Result<Option<VideoFileInfo>, String> {
         reason,
         needs_transcode,
         needs_faststart,
+        audio_tracks: probe.audio_tracks,
+        subtitle_tracks: probe.subtitle_streams,
     }))
 }
 
@@ -304,10 +482,8 @@ fn spawn_hls_ffmpeg(
     hls_dir: &Path,
     start_seconds: f64,
     needs_video_transcode: bool,
+    audio_tracks: &[AudioTrackInfo],
 ) -> Result<tokio::process::Child, String> {
-    let playlist_path = hls_dir.join("stream.m3u8");
-    let segment_pattern = hls_dir.join("seg_%03d.ts").to_string_lossy().to_string();
-
     let mut args = vec![
         "-y".to_string(),
         "-fflags".to_string(),
@@ -318,9 +494,17 @@ fn spawn_hls_ffmpeg(
         video_path.to_string(),
         "-map".to_string(),
         "0:v:0".to_string(),
-        "-map".to_string(),
-        "0:a:0?".to_string(),
     ];
+
+    if audio_tracks.len() > 1 {
+        for track in audio_tracks {
+            args.push("-map".to_string());
+            args.push(format!("0:{}", track.stream_index));
+        }
+    } else {
+        args.push("-map".to_string());
+        args.push("0:a:0?".to_string());
+    }
 
     if needs_video_transcode {
         args.extend([
@@ -358,10 +542,43 @@ fn spawn_hls_ffmpeg(
         "mpegts".to_string(),
         "-start_number".to_string(),
         "0".to_string(),
-        "-hls_segment_filename".to_string(),
-        segment_pattern,
-        playlist_path.to_string_lossy().to_string(),
     ]);
+
+    if audio_tracks.len() > 1 {
+        let mut var_stream_parts = vec!["v:0,agroup:audio".to_string()];
+        for (idx, track) in audio_tracks.iter().enumerate() {
+            let lang = if track.language == "und" { "und" } else { &track.language };
+            let default_str = if track.is_default || (idx == 0 && !audio_tracks.iter().any(|t| t.is_default)) {
+                "yes"
+            } else {
+                "no"
+            };
+            let clean_name = track.label.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+            var_stream_parts.push(format!(
+                "a:{},agroup:audio,language:{},name:{},default:{}",
+                idx, lang, clean_name, default_str
+            ));
+        }
+
+        let var_stream_map = var_stream_parts.join(" ");
+        args.extend([
+            "-master_pl_name".to_string(),
+            "stream.m3u8".to_string(),
+            "-var_stream_map".to_string(),
+            var_stream_map,
+            "-hls_segment_filename".to_string(),
+            hls_dir.join("seg_%v_%03d.ts").to_string_lossy().to_string(),
+            hls_dir.join("variant_%v.m3u8").to_string_lossy().to_string(),
+        ]);
+    } else {
+        let playlist_path = hls_dir.join("stream.m3u8");
+        let segment_pattern = hls_dir.join("seg_%03d.ts").to_string_lossy().to_string();
+        args.extend([
+            "-hls_segment_filename".to_string(),
+            segment_pattern,
+            playlist_path.to_string_lossy().to_string(),
+        ]);
+    }
 
     let mut cmd = Command::new("ffmpeg");
     cmd.args(&args)
@@ -424,7 +641,16 @@ pub async fn start_host_tunnel(
     let selected_mode = match stream_mode.as_deref() {
         Some("hls") => "hls".to_string(),
         Some("direct") => {
-            if ext == "mp4" || ext == "webm" {
+            if probe.audio_tracks.len() > 1 {
+                let _ = app.emit(
+                    "host-tunnel-status",
+                    serde_json::json!({
+                        "step": "fallback-hls",
+                        "message": "Multiple audio tracks detected — using HLS engine for audio language switching."
+                    }),
+                );
+                "hls".to_string()
+            } else if ext == "mp4" || ext == "webm" {
                 if !probe.needs_video_transcode && !probe.needs_audio_transcode {
                     "direct".to_string()
                 } else if !probe.needs_video_transcode {
@@ -458,7 +684,14 @@ pub async fn start_host_tunnel(
             }
         }
         _ => {
-            if ext == "mkv" || ext == "avi" || ext == "mov" || needs_transcode || needs_faststart {
+            if ext == "mkv"
+                || ext == "avi"
+                || ext == "mov"
+                || needs_transcode
+                || needs_faststart
+                || probe.audio_tracks.len() > 1
+                || probe.subtitle_streams.len() > 1
+            {
                 "hls".to_string()
             } else {
                 "direct".to_string()
@@ -466,7 +699,6 @@ pub async fn start_host_tunnel(
         }
     };
 
-    let mut subtitle_url: Option<String> = None;
     let mut is_hls = false;
     let mut active_hls_dir: Option<PathBuf> = None;
 
@@ -487,20 +719,52 @@ pub async fn start_host_tunnel(
         let hls_dir = std::env::temp_dir().join(format!("wt-hls-{timestamp}"));
         let _ = fs::create_dir_all(&hls_dir);
 
-        let vtt_path = hls_dir.join("subtitles.vtt");
-        let _ = Command::new("ffmpeg")
-            .args([
-                "-v", "error",
-                "-y",
-                "-i", &file_path,
-                "-map", "0:s:0?",
-                "-f", "webvtt",
-                &vtt_path.to_string_lossy(),
-            ])
-            .output()
-            .await;
+        for (idx, sub) in probe.subtitle_streams.iter().enumerate() {
+            if let Some(stream_index) = sub.stream_index {
+                let filename = format!("subtitles_{}_{}.vtt", idx, sub.language);
+                let vtt_out = hls_dir.join(&filename);
+                let _ = Command::new("ffmpeg")
+                    .args([
+                        "-v", "error",
+                        "-y",
+                        "-i", &file_path,
+                        "-map", &format!("0:{stream_index}"),
+                        "-f", "webvtt",
+                        &vtt_out.to_string_lossy(),
+                    ])
+                    .output()
+                    .await;
+            }
+        }
 
-        let child = match spawn_hls_ffmpeg(&file_path, &hls_dir, 0.0, probe.needs_video_transcode) {
+        let vtt_path = hls_dir.join("subtitles.vtt");
+        let first_extracted = probe.subtitle_streams.first().map(|sub| {
+            hls_dir.join(format!("subtitles_0_{}.vtt", sub.language))
+        });
+
+        if let Some(first_path) = first_extracted.filter(|p| p.exists()) {
+            let _ = fs::copy(first_path, &vtt_path);
+        } else if probe.subtitle_streams.is_empty() {
+            let _ = Command::new("ffmpeg")
+                .args([
+                    "-v", "error",
+                    "-y",
+                    "-i", &file_path,
+                    "-map", "0:s:0?",
+                    "-f", "webvtt",
+                    &vtt_path.to_string_lossy(),
+                ])
+                .output()
+                .await;
+        }
+
+        let child = match spawn_hls_ffmpeg(
+            &file_path,
+            &hls_dir,
+            0.0,
+            probe.needs_video_transcode,
+            &probe.audio_tracks,
+        ) {
             Ok(child) => child,
             Err(error) => {
                 let _ = fs::remove_dir_all(&hls_dir);
@@ -602,7 +866,7 @@ pub async fn start_host_tunnel(
         .allow_origin(tower_http::cors::Any)
         .allow_methods(tower_http::cors::Any)
         .allow_headers(tower_http::cors::Any)
-        .expose_headers([CONTENT_RANGE, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_TYPE]);
+        .expose_headers([CONTENT_RANGE, ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_TYPE, CACHE_CONTROL]);
 
     let server_app = router
         .layer(cors)
@@ -666,6 +930,7 @@ pub async fn start_host_tunnel(
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         let url_re = Regex::new(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com").unwrap();
+        let mut last_startup_error: Option<String> = None;
 
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(m) = url_re.find(&line) {
@@ -674,21 +939,27 @@ pub async fn start_host_tunnel(
                 if let Some(tx) = lock.take() {
                     let _ = tx.send(url);
                 }
+                continue;
             }
-            if line.contains("Error") || line.contains("error") {
-                let _ = app_tunnel.emit(
-                    "host-tunnel-status",
-                    serde_json::json!({ "step": "error", "message": line }),
-                );
+
+            let is_benign_notice = line.contains("Failed to initialize DNS local resolver")
+                || line.contains("Cannot determine default origin certificate")
+                || line.contains("use of closed network connection")
+                || line.contains("context canceled");
+
+            if !is_benign_notice && (line.contains(" ERR ") || line.contains("error=")) {
+                last_startup_error = Some(line);
             }
         }
 
         if tx_ref.lock().await.is_some() {
+            let message = last_startup_error
+                .unwrap_or_else(|| "Cloudflare tunnel exited before publishing a URL.".to_string());
             let _ = app_tunnel.emit(
                 "host-tunnel-status",
                 serde_json::json!({
                     "step": "error",
-                    "message": "Cloudflare tunnel exited before publishing a URL."
+                    "message": message
                 }),
             );
         }
@@ -711,13 +982,59 @@ pub async fn start_host_tunnel(
             }
         };
 
+    let mut subtitle_tracks: Vec<SubtitleTrackInfo> = Vec::new();
     let (stream_url, local_stream_url) = if is_hls {
         let s_url = format!("{tunnel_base_url}/hls/stream.m3u8");
         let l_url = format!("http://127.0.0.1:{local_port}/hls/stream.m3u8");
         if let Some(ref h_dir) = active_hls_dir {
-            let vtt = h_dir.join("subtitles.vtt");
-            if vtt.exists() && fs::metadata(&vtt).map(|m| m.len() > 10).unwrap_or(false) {
-                subtitle_url = Some(format!("{tunnel_base_url}/hls/subtitles.vtt"));
+            for (idx, sub) in probe.subtitle_streams.iter().enumerate() {
+                let filename = format!("subtitles_{}_{}.vtt", idx, sub.language);
+                let vtt = h_dir.join(&filename);
+                if vtt.exists() && fs::metadata(&vtt).map(|m| m.len() > 10).unwrap_or(false) {
+                    subtitle_tracks.push(SubtitleTrackInfo {
+                        id: format!("sub-{idx}"),
+                        stream_index: sub.stream_index,
+                        language: sub.language.clone(),
+                        label: sub.label.clone(),
+                        url: format!("{tunnel_base_url}/hls/{filename}"),
+                        is_default: sub.is_default,
+                    });
+                }
+            }
+
+            let fallback_vtt = h_dir.join("subtitles.vtt");
+            if subtitle_tracks.is_empty()
+                && fallback_vtt.exists()
+                && fs::metadata(&fallback_vtt).map(|m| m.len() > 10).unwrap_or(false)
+            {
+                subtitle_tracks.push(SubtitleTrackInfo {
+                    id: "sub-default".to_string(),
+                    stream_index: Some(0),
+                    language: "und".to_string(),
+                    label: "Default Subtitles".to_string(),
+                    url: format!("{tunnel_base_url}/hls/subtitles.vtt"),
+                    is_default: true,
+                });
+            }
+
+            let ext_tracks = crate::subtitles::scan_directory_subtitles(&path);
+            for (ext_idx, ext_sub) in ext_tracks.into_iter().enumerate() {
+                let ext_filename = format!("external_sub_{ext_idx}.vtt");
+                let target_path = h_dir.join(&ext_filename);
+                if fs::write(&target_path, &ext_sub.content).is_ok() {
+                    subtitle_tracks.push(SubtitleTrackInfo {
+                        id: format!("sub-ext-{ext_idx}"),
+                        stream_index: None,
+                        language: ext_sub.language.unwrap_or_else(|| "und".to_string()),
+                        label: ext_sub.file_name,
+                        url: format!("{tunnel_base_url}/hls/{ext_filename}"),
+                        is_default: false,
+                    });
+                }
+            }
+
+            if let Ok(json_bytes) = serde_json::to_vec(&subtitle_tracks) {
+                let _ = fs::write(h_dir.join("subtitles.json"), json_bytes);
             }
         }
         (s_url, l_url)
@@ -727,6 +1044,8 @@ pub async fn start_host_tunnel(
             format!("http://127.0.0.1:{local_port}/video"),
         )
     };
+
+    let subtitle_url = subtitle_tracks.first().map(|s| s.url.clone());
 
     let _ = app.emit(
         "host-tunnel-status",
@@ -752,5 +1071,27 @@ pub async fn start_host_tunnel(
         is_hls,
         stream_mode: selected_mode,
         subtitle_url,
+        subtitle_tracks,
+        audio_tracks: probe.audio_tracks,
     })
+}
+
+#[tauri::command]
+pub async fn get_audio_tracks(video_path: Option<String>) -> Result<Vec<AudioTrackInfo>, String> {
+    let path_str = match video_path {
+        Some(p) if !p.is_empty() => p,
+        _ => return Ok(Vec::new()),
+    };
+    let probe = probe_video_file(&path_str).await;
+    Ok(probe.audio_tracks)
+}
+
+#[tauri::command]
+pub async fn get_subtitle_tracks(video_path: Option<String>) -> Result<Vec<SubtitleTrackInfo>, String> {
+    let path_str = match video_path {
+        Some(p) if !p.is_empty() => p,
+        _ => return Ok(Vec::new()),
+    };
+    let probe = probe_video_file(&path_str).await;
+    Ok(probe.subtitle_streams)
 }

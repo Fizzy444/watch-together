@@ -1,6 +1,7 @@
+import { memo } from 'react';
 import { Users } from 'lucide-react';
 
-export default function UserList({ users = [], hostId, currentUserId }) {
+function UserList({ users = [], hostId, currentUserId }) {
   // Deduplicate by id
   const uniqueUsers = Array.from(new Map(users.map((u) => [u.id, u])).values());
 
@@ -48,3 +49,5 @@ export default function UserList({ users = [], hostId, currentUserId }) {
     </div>
   );
 }
+
+export default memo(UserList);

@@ -39,71 +39,26 @@ export default function ProfileBadge({ name, onEdit, onClear }) {
         className="profile-badge-btn"
         onClick={() => setOpen((prev) => !prev)}
         title={name ? `Username: ${name}` : 'Guest'}
-        style={{
-          cursor: 'pointer',
-          userSelect: 'none',
-          outline: 'none',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '8px',
-        }}
+        aria-expanded={open}
       >
         <div className="profile-badge-avatar">
           {name ? initial : <User size={12} />}
         </div>
-        <span className="profile-badge-name">
-          {name || 'Anonymous'}
-        </span>
+        <span className="profile-badge-name">{name || 'Anonymous'}</span>
         <ChevronDown
           size={13}
           style={{
             color: 'var(--text-3)',
-            transition: 'transform 0.2s ease',
+            transition: 'transform var(--t-fast)',
             transform: open ? 'rotate(180deg)' : 'none',
           }}
         />
       </button>
 
       {open && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 8px)',
-            right: 0,
-            zIndex: 1000,
-            minWidth: 180,
-            background: 'var(--bg-card, #18181b)',
-            border: '1px solid var(--border, rgba(255, 255, 255, 0.1))',
-            borderRadius: 'var(--r-md, 10px)',
-            boxShadow: '0 12px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255,255,255,0.05)',
-            backdropFilter: 'blur(16px)',
-            padding: '6px',
-            animation: 'fadeIn 0.15s ease-out',
-          }}
-        >
-          <div
-            style={{
-              padding: '8px 10px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-            }}
-          >
-            <div
-              style={{
-                width: 30,
-                height: 30,
-                borderRadius: '50%',
-                background: 'var(--primary, #e5484d)',
-                color: '#fff',
-                fontSize: '0.8125rem',
-                fontWeight: 700,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}
-            >
+        <div className="profile-dropdown">
+          <div style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div className="profile-badge-avatar" style={{ width: 28, height: 28, fontSize: '0.8125rem' }}>
               {name ? initial : <User size={14} />}
             </div>
             <div style={{ overflow: 'hidden', flex: 1 }}>
@@ -119,77 +74,18 @@ export default function ProfileBadge({ name, onEdit, onClear }) {
               >
                 {name || 'Guest'}
               </div>
-              <div
-                style={{
-                  fontSize: '0.6875rem',
-                  color: 'var(--text-3)',
-                }}
-              >
-                Current Username
-              </div>
+              <div style={{ fontSize: '0.6875rem', color: 'var(--text-3)' }}>Username</div>
             </div>
           </div>
 
-          <div style={{ height: 1, background: 'var(--border, rgba(255, 255, 255, 0.08))', margin: '4px 0' }} />
+          <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
 
-          <button
-            type="button"
-            onClick={handleEditClick}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 10px',
-              fontSize: '0.8125rem',
-              fontWeight: 500,
-              color: 'var(--text-1)',
-              background: 'transparent',
-              border: 'none',
-              borderRadius: 'var(--r-sm, 6px)',
-              cursor: 'pointer',
-              textAlign: 'left',
-              transition: 'background 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'var(--bg-hover)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-            }}
-          >
+          <button type="button" className="profile-dropdown-item" onClick={handleEditClick}>
             <Edit2 size={13} color="var(--text-2)" />
             <span>Change Username</span>
           </button>
 
-          <button
-            type="button"
-            onClick={handleClearClick}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 10px',
-              fontSize: '0.8125rem',
-              fontWeight: 500,
-              color: 'var(--text-3)',
-              background: 'transparent',
-              border: 'none',
-              borderRadius: 'var(--r-sm, 6px)',
-              cursor: 'pointer',
-              textAlign: 'left',
-              transition: 'background 0.15s ease, color 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
-              e.currentTarget.style.color = 'var(--error)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent';
-              e.currentTarget.style.color = 'var(--text-3)';
-            }}
-          >
+          <button type="button" className="profile-dropdown-item danger" onClick={handleClearClick}>
             <Trash2 size={13} />
             <span>Clear Username</span>
           </button>

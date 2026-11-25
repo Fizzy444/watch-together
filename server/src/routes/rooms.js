@@ -2,6 +2,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { MEDIA_DIR, HLS_DIR, ALLOWED_EXTENSIONS } from '../config.js';
+import { transcodeToHLS } from '../services/ffmpeg.js';
 import {
   createRoom,
   getRoom,
@@ -44,7 +45,16 @@ router.post('/', async (req, res) => {
 
   if (streamType === 'tunnel' || (movie && (movie.startsWith('http://') || movie.startsWith('https://')))) {
     const movieTitle = name || 'Host Cloudflare Stream';
-    const room = createRoom(movie, movieTitle, name, clientId, 'tunnel', req.body.duration);
+    const room = createRoom(
+      movie,
+      movieTitle,
+      name,
+      clientId,
+      'tunnel',
+      req.body.duration,
+      req.body.subtitleTracks,
+      req.body.audioTracks
+    );
     return res.json({
       roomId: room.id,
       url: `/watch/${room.id}`,
@@ -71,6 +81,7 @@ router.post('/', async (req, res) => {
   // Create room with custom name if provided
   const movieName = path.basename(movie, ext);
   const room = createRoom(movie, movieName, name, clientId, 'server');
+  transcodeToHLS(moviePath, room.id).catch(() => {});
 
   res.json({
     roomId: room.id,
@@ -118,6 +129,7 @@ router.get('/:id/stream/status', (req, res) => {
       isP2P: true,
       streamType: 'p2p',
       movie: room.movie,
+      movieDuration: room.movieDuration || 0,
     });
   }
 
@@ -128,6 +140,9 @@ router.get('/:id/stream/status', (req, res) => {
       isTunnel: true,
       streamType: 'tunnel',
       movie: room.movie,
+      movieDuration: room.movieDuration || 0,
+      subtitleTracks: room.subtitleTracks || [],
+      audioTracks: room.audioTracks || [],
     });
   }
 
@@ -135,6 +150,14 @@ router.get('/:id/stream/status', (req, res) => {
   const fileExists = fs.existsSync(moviePath);
   const playlist = path.join(HLS_DIR, req.params.id, 'index.m3u8');
   const hlsReady = fs.existsSync(playlist);
+
+  let subtitleTracks = room.subtitleTracks || [];
+  const subsFile = path.join(HLS_DIR, req.params.id, 'subtitles.json');
+  if (fs.existsSync(subsFile)) {
+    try {
+      subtitleTracks = JSON.parse(fs.readFileSync(subsFile, 'utf8'));
+    } catch {}
+  }
 
   // Direct progressive streaming is ready immediately when movie exists
   res.json({
@@ -144,6 +167,9 @@ router.get('/:id/stream/status', (req, res) => {
     isP2P: false,
     streamType: 'server',
     movie: room.movie,
+    movieDuration: room.movieDuration || 0,
+    subtitleTracks,
+    audioTracks: room.audioTracks || [],
   });
 });
 
@@ -242,12 +268,24 @@ router.get('/:id/stream/*', (req, res) => {
     return res.status(404).json({ error: 'Segment not found' });
   }
 
-  const ext = path.extname(filePath);
-  const contentType =
-    ext === '.m3u8' ? 'application/vnd.apple.mpegurl' : 'video/mp2t';
+  const ext = path.extname(filePath).toLowerCase();
+  let contentType = 'video/mp2t';
+  let cacheControl = 'public, max-age=31536000, immutable';
+
+  if (ext === '.m3u8') {
+    contentType = 'application/vnd.apple.mpegurl';
+    cacheControl = 'no-cache, no-store, must-revalidate';
+  } else if (ext === '.vtt') {
+    contentType = 'text/vtt';
+    cacheControl = 'public, max-age=86400';
+  } else if (ext === '.json') {
+    contentType = 'application/json';
+    cacheControl = 'no-cache';
+  }
 
   res.setHeader('Content-Type', contentType);
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', cacheControl);
+  res.setHeader('Accept-Ranges', 'bytes');
   fs.createReadStream(filePath).pipe(res);
 });
 
