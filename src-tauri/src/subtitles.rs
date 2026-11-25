@@ -146,7 +146,7 @@ fn probe_embedded_subtitles(file_path: &str) -> Vec<SubtitleTrack> {
     tracks
 }
 
-fn scan_directory_subtitles(video_path: &Path) -> Vec<SubtitleTrack> {
+pub(crate) fn scan_directory_subtitles(video_path: &Path) -> Vec<SubtitleTrack> {
     let mut tracks = Vec::new();
     let parent = match video_path.parent() {
         Some(p) => p,
@@ -222,9 +222,15 @@ pub async fn find_matching_subtitles(
         return Ok(Vec::new());
     }
 
-    let mut tracks = probe_embedded_subtitles(&path_str);
-    let mut file_tracks = scan_directory_subtitles(&path);
-    tracks.append(&mut file_tracks);
+    let tracks = tokio::task::spawn_blocking(move || {
+        let mut tracks = probe_embedded_subtitles(&path_str);
+        let mut file_tracks = scan_directory_subtitles(&path);
+        tracks.append(&mut file_tracks);
+        tracks
+    })
+    .await
+    .map_err(|e| format!("Failed to probe subtitles: {e}"))?;
+
     Ok(tracks)
 }
 

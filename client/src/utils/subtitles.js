@@ -50,7 +50,11 @@ export function srtToVtt(srtText, offsetSeconds = 0) {
     );
   }
 
-  text = text.replace(/<font[^>]*>/gi, '').replace(/<\/font>/gi, '');
+  // Remove SSA/ASS style overrides like {\an8}, {\pos(..)}, {\b1}, {\c&H...&}
+  text = text.replace(/\{[^}\n]+\}/g, '');
+
+  // Strip all HTML/XML-like formatting tags (including malformed tags like <b>...<b>, <font...>, <i>, <u>, etc.)
+  text = text.replace(/<[^>\n]+>/g, '');
 
   return `WEBVTT\n\n${text}\n`;
 }
@@ -107,4 +111,66 @@ export function getFriendlySubtitleLabel(filename) {
   }
 
   return filename;
+}
+
+export function formatSubtitleTrackLabel(track, fallbackIndex = 0) {
+  if (!track) return `Subtitle ${fallbackIndex + 1}`;
+
+  const langCode = (track.lang || track.language || '').toLowerCase().trim();
+  const LANG_MAP = {
+    en: 'English',
+    eng: 'English',
+    es: 'Spanish',
+    spa: 'Spanish',
+    fr: 'French',
+    fra: 'French',
+    fre: 'French',
+    de: 'German',
+    ger: 'German',
+    deu: 'German',
+    it: 'Italian',
+    ita: 'Italian',
+    pt: 'Portuguese',
+    por: 'Portuguese',
+    ru: 'Russian',
+    rus: 'Russian',
+    ja: 'Japanese',
+    jpn: 'Japanese',
+    zh: 'Chinese',
+    chi: 'Chinese',
+    zho: 'Chinese',
+    hi: 'Hindi',
+    hin: 'Hindi',
+    ko: 'Korean',
+    kor: 'Korean',
+    ar: 'Arabic',
+    ara: 'Arabic',
+  };
+  const langName =
+    LANG_MAP[langCode] || (langCode && langCode !== 'und' ? langCode.toUpperCase() : null);
+
+  const rawName = (track.title || track.name || track.label || '').trim();
+  const isGeneric =
+    !rawName ||
+    /^track[_\s-]*\d+$/i.test(rawName) ||
+    /^embedded[_\s-]*track[_\s-]*\d+$/i.test(rawName) ||
+    /^subtitle[_\s-]*\d+$/i.test(rawName) ||
+    /^default[_\s-]*subtitles/i.test(rawName);
+
+  if (rawName && !isGeneric) {
+    if (langName && !rawName.toLowerCase().includes(langName.toLowerCase())) {
+      return `${langName} — ${rawName}`;
+    }
+    return rawName;
+  }
+
+  if (langName) {
+    return langName;
+  }
+
+  if (track.fileName) {
+    return getFriendlySubtitleLabel(track.fileName);
+  }
+
+  return `Subtitle ${fallbackIndex + 1}`;
 }

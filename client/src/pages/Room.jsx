@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { getServerUrl, DEFAULT_SERVER_URL } from '../utils/serverUrl.js';
 import { useWebRTC } from '../hooks/useWebRTC.js';
@@ -9,13 +9,13 @@ import { getProfileName, saveProfileName } from '../utils/profile.js';
 import VideoPlayer from '../components/VideoPlayer.jsx';
 import UserList from '../components/UserList.jsx';
 import ChatBox from '../components/ChatBox.jsx';
-import ProfileModal from '../components/ProfileModal.jsx';
 import ProfileBadge from '../components/ProfileBadge.jsx';
+
+const ProfileModal = lazy(() => import('../components/ProfileModal.jsx'));
 import {
   ArrowLeft,
   Loader2,
   AlertTriangle,
-  ShieldCheck,
   Crown,
   MessageSquare,
   Users,
@@ -25,7 +25,6 @@ import {
   X,
   Power,
   Zap,
-  Globe,
   Upload,
   PanelRightClose,
   PanelRightOpen,
@@ -74,6 +73,9 @@ export default function Room() {
   const [hostSubtitleUrl] = useState(
     () => location.state?.subtitleUrl || window.__hostSubtitleUrl || null
   );
+  const [streamAudioTracks, setStreamAudioTracks] = useState(null);
+  const [streamSubtitleTracks, setStreamSubtitleTracks] = useState(null);
+  const [streamMovieDuration, setStreamMovieDuration] = useState(null);
   const [error, setError] = useState('');
     const [toasts, setToasts] = useState([]);
   const pollRef = useRef(null);
@@ -228,6 +230,9 @@ export default function Room() {
       const status = await getStreamStatus(roomId).catch(() => ({ ready: false }));
       if (status.ready) {
         setStreamReady(true);
+        if (status.audioTracks) setStreamAudioTracks(status.audioTracks);
+        if (status.subtitleTracks) setStreamSubtitleTracks(status.subtitleTracks);
+        if (status.movieDuration) setStreamMovieDuration(status.movieDuration);
         if (pollRef.current) clearInterval(pollRef.current);
       }
     };
@@ -327,9 +332,6 @@ export default function Room() {
 
 // Host state already computed above
 
-  const hostUser = room?.users?.find((u) => u.isHost || u.id === room?.hostId);
-  const hostName = hostUser?.name || 'Host';
-
   const handlePlay = useCallback(
     (position) => {
       send('play', { position, serverTime: Date.now() });
@@ -354,9 +356,14 @@ export default function Room() {
     [send, applyMessage]
   );
 
+  const lastTimeUpdateSentRef = useRef(0);
   const handleTimeUpdate = useCallback(
     (position) => {
-      send('time_update', { position });
+      const now = Date.now();
+      if (now - lastTimeUpdateSentRef.current >= 2000) {
+        lastTimeUpdateSentRef.current = now;
+        send('time_update', { position });
+      }
     },
     [send]
   );
@@ -375,15 +382,15 @@ export default function Room() {
     }
   }
 
-  function toggleSidebar() {
+  const toggleSidebar = useCallback(() => {
     setSidebarOpen((prev) => {
       const next = !prev;
-      if (next && activeTab === 'chat') {
+      if (next && activeTabRef.current === 'chat') {
         setUnreadChat(0);
       }
       return next;
     });
-  }
+  }, []);
 
   useEffect(() => {
     function onKeyDown(e) {
@@ -395,7 +402,38 @@ export default function Room() {
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTab]);
+  }, [toggleSidebar]);
+
+  const p2pStatus = useMemo(
+    () => ({ connectionState, viewersCount: connectedViewersCount }),
+    [connectionState, connectedViewersCount]
+  );
+
+  const handleStreamReady = useMemo(
+    () => (isP2P && isHost ? setLocalStream : null),
+    [isP2P, isHost]
+  );
+
+  const resolvedSubtitleTracks =
+    location?.state?.subtitleTracks ||
+    window.__hostSubtitleTracks ||
+    room?.subtitleTracks ||
+    streamSubtitleTracks ||
+    null;
+
+  const resolvedAudioTracks =
+    window.__hostAudioTracks ||
+    location?.state?.audioTracks ||
+    room?.audioTracks ||
+    streamAudioTracks ||
+    null;
+
+  const resolvedDuration =
+    location?.state?.movieDuration ||
+    window.__hostMovieDuration ||
+    room?.movieDuration ||
+    streamMovieDuration ||
+    null;
 
   if (error) {
     return (
@@ -500,7 +538,11 @@ export default function Room() {
 
   // Direct progressive streaming endpoint
   const serverUrl = getServerUrl() || DEFAULT_SERVER_URL;
-  const videoSrc = isTunnel ? ((isHost && hostLocalStreamUrl) ? hostLocalStreamUrl : room.movie) : (streamReady ? `${serverUrl}/api/rooms/${roomId}/video` : null);
+  const videoSrc = isTunnel
+    ? ((isHost && hostLocalStreamUrl) ? hostLocalStreamUrl : room.movie)
+    : (streamReady
+        ? `${serverUrl}/api/rooms/${roomId}/stream/index.m3u8`
+        : null);
 
   return (
     <div className="room-page-wrapper">
@@ -537,53 +579,26 @@ export default function Room() {
           </div>
 
           {isHost ? (
-            <span
-              className="badge badge-host"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', fontSize: '0.6875rem' }}
-            >
+            <span className="badge badge-host badge-compact room-topbar-role-badge">
               <Crown size={11} />
-              Host
+              <span>Host</span>
             </span>
           ) : (
-            <span className="badge" style={{ padding: '2px 7px', fontSize: '0.6875rem', color: 'var(--text-3)' }}>
+            <span className="badge badge-compact room-topbar-role-badge" style={{ color: 'var(--text-3)' }}>
               Viewer
             </span>
           )}
 
           {isP2P && (
-            <span
-              className="badge"
-              style={{
-                background: "rgba(234, 179, 8, 0.12)",
-                color: "#eab308",
-                border: "1px solid rgba(234, 179, 8, 0.3)",
-                padding: "2px 7px",
-                fontSize: "0.6875rem",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
+            <span className="badge badge-warning badge-compact room-topbar-role-badge">
               <Zap size={11} />
-              P2P WebRTC
+              <span>P2P</span>
             </span>
           )}
           {isTorrent && (
-            <span
-              className="badge"
-              style={{
-                background: "rgba(59, 130, 246, 0.12)",
-                color: "#3b82f6",
-                border: "1px solid rgba(59, 130, 246, 0.3)",
-                padding: "2px 7px",
-                fontSize: "0.6875rem",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
+            <span className="badge badge-info badge-compact room-topbar-role-badge">
               <Zap size={11} />
-              WebTorrent
+              <span>Torrent</span>
             </span>
           )}
         </div>
@@ -603,19 +618,23 @@ export default function Room() {
 
           {/* Invite Link Button */}
           <button
+            type="button"
             className="btn btn-secondary btn-sm room-topbar-btn"
             onClick={copyRoomLink}
             title={copiedLink ? 'Link copied to clipboard!' : 'Copy room invite link'}
+            aria-label="Copy invite link"
           >
             {copiedLink ? <Check size={14} color="var(--success)" /> : <Link2 size={14} />}
-            <span>{copiedLink ? 'Copied!' : 'Invite Link'}</span>
+            <span className="room-topbar-btn-label">{copiedLink ? 'Copied!' : 'Invite Link'}</span>
           </button>
 
           {/* Toggle Sidebar Button (Cinema Mode) */}
           <button
+            type="button"
             className={`btn btn-sm room-topbar-btn ${sidebarOpen ? "btn-ghost" : "btn-secondary"}`}
             onClick={toggleSidebar}
             title={sidebarOpen ? 'Collapse sidebar (Cinema Mode)' : 'Show Chat & Members'}
+            aria-label={sidebarOpen ? 'Hide chat' : 'Show chat'}
           >
             {sidebarOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
             <span className="room-topbar-btn-label">{sidebarOpen ? 'Hide Chat' : 'Chat'}</span>
@@ -627,21 +646,25 @@ export default function Room() {
           {/* Stop Room (Host) or Leave Room */}
           {isHost ? (
             <button
+              type="button"
               className="btn btn-danger-soft btn-sm room-topbar-btn room-topbar-stop-btn"
               onClick={() => setShowCloseConfirm(true)}
               title="Close room for everyone"
+              aria-label="Stop room"
             >
               <Power size={14} />
-              <span>Stop Room</span>
+              <span className="room-topbar-btn-label">Stop Room</span>
             </button>
           ) : (
             <button
+              type="button"
               className="btn btn-ghost btn-sm room-topbar-btn"
               onClick={handleLeaveRoom}
               title="Leave Room"
+              aria-label="Leave room"
             >
               <ArrowLeft size={14} />
-              <span>Leave</span>
+              <span className="room-topbar-btn-label">Leave</span>
             </button>
           )}
         </div>
@@ -730,19 +753,21 @@ export default function Room() {
               ref={videoPlayerRef}
               src={videoSrc}
               subtitleUrl={hostSubtitleUrl || room?.subtitleUrl || null}
+              subtitleTracks={resolvedSubtitleTracks}
               onPlaybackError={handleVideoPlaybackError}
               streamObject={isP2P && !isHost ? remoteStream : null}
               isP2P={isP2P}
               isTorrent={isTorrent}
               torrentMagnet={isTorrent ? room.movie : null}
-              p2pStatus={{ connectionState, viewersCount: connectedViewersCount }}
-              onStreamReady={isP2P && isHost ? setLocalStream : null}
+              p2pStatus={p2pStatus}
+              onStreamReady={handleStreamReady}
               isHost={isHost}
               initialTime={room?.currentTime || 0}
               initialPlaying={room?.playing || false}
               wasPlayingBeforeDisconnect={Boolean(room?.wasPlayingBeforeHostDisconnect || room?.hostDisconnected)}
               videoPath={window.__hostFilePath || null}
-              knownDuration={window.__hostMovieDuration || room?.movieDuration || null}
+              audioTracks={resolvedAudioTracks}
+              knownDuration={resolvedDuration}
               onPlay={handlePlay}
               onPause={handlePause}
               onSeek={handleSeek}
@@ -842,9 +867,11 @@ export default function Room() {
                 <X size={16} />
               </button>
             </div>
-            <div className="modal-body" style={{ padding: 'var(--sp-4)', gap: 'var(--sp-2)' }}>
+            <div className="modal-body shortcuts-list">
               {[
-                { key: 'C', desc: 'Toggle Sidebar / Cinema Mode' },
+                { key: 'Shift + C', desc: 'Toggle Chat Sidebar' },
+                { key: 'C', desc: 'Toggle Subtitles' },
+                { key: 'B', desc: 'Cycle Audio Language' },
                 { key: 'Space / K', desc: 'Play / Pause (Host)' },
                 { key: '← / →', desc: 'Skip 5s (Host)' },
                 { key: 'J / L', desc: 'Skip 10s (Host)' },
@@ -852,28 +879,8 @@ export default function Room() {
                 { key: 'M', desc: 'Mute / Unmute' },
                 { key: 'F', desc: 'Toggle Fullscreen' },
               ].map((s) => (
-                <div
-                  key={s.key}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    fontSize: '0.8125rem',
-                  }}
-                >
-                  <kbd
-                    style={{
-                      background: 'var(--bg)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 'var(--r-sm)',
-                      padding: '2px 6px',
-                      fontFamily: 'monospace',
-                      fontSize: '0.75rem',
-                      color: 'var(--text-1)',
-                    }}
-                  >
-                    {s.key}
-                  </kbd>
+                <div key={s.key} className="shortcut-row">
+                  <kbd className="shortcut-kbd">{s.key}</kbd>
                   <span style={{ color: 'var(--text-2)' }}>{s.desc}</span>
                 </div>
               ))}
@@ -882,13 +889,16 @@ export default function Room() {
         </div>
       )}
 
-      {/* Profile Modal */}
-      <ProfileModal
-        isOpen={isProfileModalOpen}
-        onClose={() => setIsProfileModalOpen(false)}
-        currentName={userName}
-        onSave={handleProfileSave}
-      />
+      <Suspense fallback={null}>
+        {isProfileModalOpen && (
+          <ProfileModal
+            isOpen={isProfileModalOpen}
+            onClose={() => setIsProfileModalOpen(false)}
+            currentName={userName}
+            onSave={handleProfileSave}
+          />
+        )}
+      </Suspense>
 
       {/* Close Room Confirmation Modal */}
       {showCloseConfirm && (

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, memo } from 'react';
 import { Send, MessageSquare, Crown } from 'lucide-react';
 
 function formatChatTime(ts) {
@@ -7,7 +7,7 @@ function formatChatTime(ts) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export default function ChatBox({
+function ChatBox({
   messages = [],
   onSendMessage,
   currentUserId,
@@ -108,3 +108,5 @@ export default function ChatBox({
     </div>
   );
 }
+
+export default memo(ChatBox);

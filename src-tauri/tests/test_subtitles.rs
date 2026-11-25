@@ -65,3 +65,38 @@ fn test_subtitle_matching() {
     assert!(content.contains("Hello, Watch Together Rust!"));
     println!("Test passed: subtitle matched: {name}");
 }
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SubtitleTrackInfo {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_index: Option<u32>,
+    pub language: String,
+    pub label: String,
+    pub url: String,
+    pub is_default: bool,
+}
+
+#[test]
+fn test_subtitle_track_info_serialization() {
+    let track = SubtitleTrackInfo {
+        id: "sub-0".to_string(),
+        stream_index: Some(2),
+        language: "en".to_string(),
+        label: "English (SDH)".to_string(),
+        url: "http://localhost:8080/hls/subtitles_0_en.vtt".to_string(),
+        is_default: true,
+    };
+
+    let json = serde_json::to_string(&track).expect("Serialize subtitle track");
+    assert!(json.contains("\"streamIndex\":2"));
+    assert!(json.contains("\"language\":\"en\""));
+    assert!(json.contains("\"label\":\"English (SDH)\""));
+    assert!(json.contains("\"isDefault\":true"));
+
+    let deserialized: SubtitleTrackInfo = serde_json::from_str(&json).expect("Deserialize subtitle track");
+    assert_eq!(deserialized.id, "sub-0");
+    assert_eq!(deserialized.language, "en");
+    assert_eq!(deserialized.label, "English (SDH)");
+}

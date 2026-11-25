@@ -21,6 +21,8 @@ pub fn run() {
             video_server::start_host_tunnel,
             video_server::stop_host_tunnel,
             video_server::seek_hls_stream,
+            video_server::get_audio_tracks,
+            video_server::get_subtitle_tracks,
             subtitles::select_subtitle_file,
             subtitles::find_matching_subtitles,
             torrent::start_torrent,

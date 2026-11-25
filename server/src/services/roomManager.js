@@ -111,7 +111,7 @@ export function getCurrentRoomTime(room) {
  * @param {string} [creatorId] - persistent client ID of creator
  * @returns {Room}
  */
-export function createRoom(movie, movieName, name = null, creatorId = null, streamType = "server", movieDuration = 0) {
+export function createRoom(movie, movieName, name = null, creatorId = null, streamType = "server", movieDuration = 0, subtitleTracks = [], audioTracks = []) {
   const id = generateRoomId();
   const roomTitle = (name && name.trim()) ? name.trim() : movieName;
 
@@ -122,6 +122,8 @@ export function createRoom(movie, movieName, name = null, creatorId = null, stre
     movieName,
     streamType: streamType || (movie === "p2p-stream" ? "p2p" : "server"),
     movieDuration: parseFloat(movieDuration) || 0,
+    subtitleTracks: Array.isArray(subtitleTracks) ? subtitleTracks : [],
+    audioTracks: Array.isArray(audioTracks) ? audioTracks : [],
     currentTime: 0,
     playing: false,
     lastUpdated: Date.now(),
@@ -331,6 +333,8 @@ export function roomPublicView(room) {
     currentTime: getCurrentRoomTime(room),
     playing: room.playing,
     hostId: room.hostId,
+    subtitleTracks: room.subtitleTracks || [],
+    audioTracks: room.audioTracks || [],
     users: room.users.map(({ id, name, isHost }) => ({ id, name, isHost })),
     messages: (room.messages || []).map(({ id, senderId, senderName, text, timestamp, isHost }) => ({
       id,

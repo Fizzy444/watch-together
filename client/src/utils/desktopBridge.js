@@ -51,6 +51,14 @@ export const desktopAPI = {
     return await invoke('find_matching_subtitles', { videoPath });
   },
 
+  getAudioTracks: async (videoPath) => {
+    return await invoke('get_audio_tracks', { videoPath });
+  },
+
+  getSubtitleTracks: async (videoPath) => {
+    return await invoke('get_subtitle_tracks', { videoPath });
+  },
+
   startTorrent: async (magnetLink) => {
     return await invoke('start_torrent', { magnetLink });
   },
