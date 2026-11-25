@@ -995,7 +995,7 @@ svg.spin {
   display: none !important;
 }
 
-/* Host Permission Guard - Lock seeking for non-host viewers */
+/* Host Permission Guard - Lock seeking and playback controls for non-host viewers */
 .viewer-mode .art-control-progress {
   pointer-events: none !important;
   cursor: default !important;
@@ -1003,8 +1003,13 @@ svg.spin {
 
 .viewer-mode .art-control-playAndPause {
   pointer-events: none !important;
-  opacity: 0.6 !important;
+  opacity: 0.45 !important;
   cursor: not-allowed !important;
+}
+
+.viewer-mode .art-mask .art-state {
+  display: none !important;
+  pointer-events: none !important;
 }
 
 .player-p2p-badge {
@@ -1575,11 +1580,33 @@ svg.spin {
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
+  .layout-room {
+    display: contents;
+  }
+
+  .room-main {
+    order: 1;
+    flex: 0 0 auto;
+    width: 100%;
+    background: #000;
+    position: relative;
+  }
+
+  .player-container {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: 46dvh;
+    background: #000;
+  }
+
   .room-topbar {
-    flex: 0 0 48px;
-    height: 48px;
-    padding: 0 max(var(--sp-2), env(safe-area-inset-left, 8px)) 0 max(var(--sp-2), env(safe-area-inset-right, 8px));
+    order: 2;
+    flex: 0 0 44px;
+    height: 44px;
+    padding: 0 max(var(--sp-2), env(safe-area-inset-right, 8px)) 0 max(var(--sp-2), env(safe-area-inset-left, 8px));
     gap: var(--sp-2);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
   }
 
   .room-topbar-left {
@@ -1587,7 +1614,7 @@ svg.spin {
   }
 
   .room-topbar-title {
-    max-width: 140px;
+    max-width: 150px;
     font-size: 0.875rem !important;
   }
 
@@ -1604,28 +1631,8 @@ svg.spin {
     gap: 4px;
   }
 
-  .layout-room {
-    flex-direction: column;
-    flex: 1 1 0;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .room-main {
-    flex: 0 0 auto;
-    width: 100%;
-    background: #000;
-    position: relative;
-  }
-
-  .player-container {
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    max-height: 46dvh;
-    background: #000;
-  }
-
   .room-sidebar {
+    order: 3;
     flex: 1 1 0;
     min-height: 0;
     max-height: none;
@@ -1634,7 +1641,7 @@ svg.spin {
     max-width: 100%;
     height: auto;
     border-left: none;
-    border-top: 1px solid var(--border);
+    border-top: none;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1775,10 +1782,13 @@ svg.spin {
 /* Landscape mobile full immersion */
 @media (max-width: 960px) and (max-height: 540px) and (orientation: landscape) {
   .room-topbar {
+    order: 0;
     flex: 0 0 40px;
     height: 40px;
-    padding: 0 max(var(--sp-2), env(safe-area-inset-left, 8px)) 0 max(var(--sp-2), env(safe-area-inset-right, 8px));
+    padding: 0 max(var(--sp-2), env(safe-area-inset-right, 8px)) 0 max(var(--sp-2), env(safe-area-inset-left, 8px));
     gap: var(--sp-2);
+    border-top: none;
+    border-bottom: 1px solid var(--border);
   }
 
   .room-topbar-subtitle,
@@ -1802,6 +1812,7 @@ svg.spin {
   }
 
   .layout-room {
+    display: flex !important;
     flex-direction: row !important;
     flex: 1 1 0;
     min-height: 0;
@@ -1809,6 +1820,7 @@ svg.spin {
   }
 
   .room-main {
+    order: 0;
     flex: 1 1 0;
     min-width: 0;
     height: 100%;
@@ -1823,6 +1835,7 @@ svg.spin {
   }
 
   .room-sidebar {
+    order: 0;
     width: clamp(220px, 32vw, 280px);
     min-width: 220px;
     max-width: 280px;
