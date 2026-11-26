@@ -1,24 +1,33 @@
 use axum::body::Body;
-use axum::extract::Request;
+use axum::extract::{Path as AxumPath, Request, State as AxumState};
 use axum::http::header::{
     ACCEPT_RANGES, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, HeaderName,
     HeaderValue,
 };
-use axum::http::Response;
+use axum::http::{Response, StatusCode};
 use axum::middleware::Next;
+use axum::response::IntoResponse;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use tokio::fs as tokio_fs;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{oneshot, Mutex};
 use tower_http::cors::CorsLayer;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeFile;
+
+const HLS_SEGMENT_DURATION: f64 = 4.0;
+const HLS_JUMP_LOOKBEHIND_SECS: f64 = 8.0;
+const HLS_PREFETCH_LOOKAHEAD_SECS: f64 = 24.0;
+const HLS_SEGMENT_WAIT_TIMEOUT_MS: u64 = 12_000;
+const HLS_TARGET_DURATION: u64 = 16;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -79,11 +88,41 @@ pub struct TunnelResult {
     pub audio_tracks: Vec<AudioTrackInfo>,
 }
 
+#[derive(Clone, Debug)]
+struct HlsRealSegment {
+    file_path: PathBuf,
+    start_sec: f64,
+    end_sec: f64,
+    generation: u64,
+}
+
+struct HlsRuntimeState {
+    ffmpeg_child: Option<tokio::process::Child>,
+    generation: u64,
+    active_cursor_start: f64,
+    base_mux_offset_by_variant: HashMap<String, f64>,
+    gen_start_by_key: HashMap<(u64, String), f64>,
+    segments_by_variant: HashMap<String, Vec<HlsRealSegment>>,
+    indexed_files: HashSet<PathBuf>,
+    shutdown: bool,
+}
+
+pub struct HlsController {
+    video_path: String,
+    hls_dir: PathBuf,
+    duration: f64,
+    needs_video_transcode: bool,
+    audio_tracks: Vec<AudioTrackInfo>,
+    state: Mutex<HlsRuntimeState>,
+    spawn_lock: Mutex<()>,
+}
+
 #[derive(Default)]
 pub struct ActiveTunnelState {
     pub server_shutdown: Option<oneshot::Sender<()>>,
     pub cloudflared_child: Option<tokio::process::Child>,
     pub ffmpeg_child: Option<tokio::process::Child>,
+    pub hls_controller: Option<Arc<HlsController>>,
     pub current_video_path: Option<String>,
     pub current_temp_remux: Option<PathBuf>,
     pub hls_dir: Option<PathBuf>,
@@ -333,6 +372,7 @@ fn resolve_cloudflared_binary() -> PathBuf {
 async fn allow_private_network(request: Request<Body>, next: Next) -> Response<Body> {
     let uri_path = request.uri().path().to_lowercase();
     let mut response = next.run(request).await;
+    let is_success = response.status().is_success();
     let headers = response.headers_mut();
     headers.insert(
         HeaderName::from_static("access-control-allow-private-network"),
@@ -344,10 +384,12 @@ async fn allow_private_network(request: Request<Body>, next: Next) -> Response<B
     );
 
     if uri_path.ends_with(".ts") || uri_path.ends_with(".m4s") {
-        headers.insert(
-            CACHE_CONTROL,
-            HeaderValue::from_static("public, max-age=31536000, immutable"),
-        );
+        let cache_val = if is_success {
+            "public, max-age=31536000, immutable"
+        } else {
+            "no-cache, no-store, must-revalidate"
+        };
+        headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_val));
     } else if uri_path.ends_with(".m3u8") {
         headers.insert(
             CACHE_CONTROL,
@@ -440,33 +482,51 @@ pub async fn select_video_file() -> Result<Option<VideoFileInfo>, String> {
 }
 
 pub async fn cleanup_tunnel(state: &SharedTunnelState) {
-    let mut guard = state.lock().await;
+    let (legacy_child, hls_controller, temp_remux, hls_dir, cloudflared_child, server_shutdown) = {
+        let mut guard = state.lock().await;
+        guard.current_video_path = None;
+        guard.stream_mode = None;
+        guard.needs_video_transcode = false;
+        (
+            guard.ffmpeg_child.take(),
+            guard.hls_controller.take(),
+            guard.current_temp_remux.take(),
+            guard.hls_dir.take(),
+            guard.cloudflared_child.take(),
+            guard.server_shutdown.take(),
+        )
+    };
 
-    if let Some(mut child) = guard.ffmpeg_child.take() {
+    if let Some(mut child) = legacy_child {
         let _ = child.kill().await;
         let _ = child.wait().await;
     }
 
-    if let Some(temp_path) = guard.current_temp_remux.take() {
+    if let Some(ctrl) = hls_controller {
+        let mut h_state = ctrl.state.lock().await;
+        h_state.shutdown = true;
+        if let Some(mut child) = h_state.ffmpeg_child.take() {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
+    }
+
+    if let Some(temp_path) = temp_remux {
         let _ = fs::remove_file(temp_path);
     }
 
-    if let Some(hls_dir) = guard.hls_dir.take() {
+    if let Some(hls_dir) = hls_dir {
         let _ = fs::remove_dir_all(hls_dir);
     }
 
-    if let Some(mut child) = guard.cloudflared_child.take() {
+    if let Some(mut child) = cloudflared_child {
         let _ = child.kill().await;
         let _ = child.wait().await;
     }
 
-    if let Some(shutdown) = guard.server_shutdown.take() {
+    if let Some(shutdown) = server_shutdown {
         let _ = shutdown.send(());
     }
-
-    guard.current_video_path = None;
-    guard.stream_mode = None;
-    guard.needs_video_transcode = false;
 }
 
 #[tauri::command]
@@ -477,10 +537,43 @@ pub async fn stop_host_tunnel(
     Ok(true)
 }
 
+fn build_unique_var_stream_map(audio_tracks: &[AudioTrackInfo]) -> String {
+    let mut var_stream_parts = vec!["v:0,agroup:audio".to_string()];
+    let mut used_names: HashSet<String> = HashSet::new();
+    for (idx, track) in audio_tracks.iter().enumerate() {
+        let lang = if track.language.is_empty() {
+            "und"
+        } else {
+            track.language.as_str()
+        };
+        let default_str =
+            if track.is_default || (idx == 0 && !audio_tracks.iter().any(|t| t.is_default)) {
+                "yes"
+            } else {
+                "no"
+            };
+        let mut clean_name = track
+            .label
+            .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+        if clean_name.is_empty() {
+            clean_name = format!("Track_{}", idx + 1);
+        }
+        if !used_names.insert(clean_name.clone()) {
+            clean_name = format!("{clean_name}_{idx}");
+            used_names.insert(clean_name.clone());
+        }
+        var_stream_parts.push(format!(
+            "a:{idx},agroup:audio,language:{lang},name:{clean_name},default:{default_str}"
+        ));
+    }
+    var_stream_parts.join(" ")
+}
+
 fn spawn_hls_ffmpeg(
     video_path: &str,
     hls_dir: &Path,
     start_seconds: f64,
+    generation: u64,
     needs_video_transcode: bool,
     audio_tracks: &[AudioTrackInfo],
 ) -> Result<tokio::process::Child, String> {
@@ -488,13 +581,19 @@ fn spawn_hls_ffmpeg(
         "-y".to_string(),
         "-fflags".to_string(),
         "+genpts".to_string(),
-        "-ss".to_string(),
-        format!("{:.3}", start_seconds),
+    ];
+
+    if start_seconds > 0.0 {
+        args.push("-ss".to_string());
+        args.push(format!("{:.3}", start_seconds));
+    }
+
+    args.extend([
         "-i".to_string(),
         video_path.to_string(),
         "-map".to_string(),
         "0:v:0".to_string(),
-    ];
+    ]);
 
     if audio_tracks.len() > 1 {
         for track in audio_tracks {
@@ -516,6 +615,8 @@ fn spawn_hls_ffmpeg(
             "22".to_string(),
             "-pix_fmt".to_string(),
             "yuv420p".to_string(),
+            "-force_key_frames".to_string(),
+            format!("expr:gte(t,n_forced*{})", HLS_SEGMENT_DURATION as u64),
         ]);
     } else {
         args.extend(["-c:v".to_string(), "copy".to_string()]);
@@ -528,51 +629,43 @@ fn spawn_hls_ffmpeg(
         "192k".to_string(),
         "-ac".to_string(),
         "2".to_string(),
-        "-avoid_negative_ts".to_string(),
-        "make_zero".to_string(),
+        "-copyts".to_string(),
         "-f".to_string(),
         "hls".to_string(),
         "-hls_time".to_string(),
-        "4".to_string(),
+        format!("{}", HLS_SEGMENT_DURATION as u64),
         "-hls_list_size".to_string(),
         "0".to_string(),
         "-hls_flags".to_string(),
-        "independent_segments".to_string(),
+        "independent_segments+temp_file".to_string(),
         "-hls_segment_type".to_string(),
         "mpegts".to_string(),
-        "-start_number".to_string(),
-        "0".to_string(),
     ]);
 
     if audio_tracks.len() > 1 {
-        let mut var_stream_parts = vec!["v:0,agroup:audio".to_string()];
-        for (idx, track) in audio_tracks.iter().enumerate() {
-            let lang = if track.language == "und" { "und" } else { &track.language };
-            let default_str = if track.is_default || (idx == 0 && !audio_tracks.iter().any(|t| t.is_default)) {
-                "yes"
-            } else {
-                "no"
-            };
-            let clean_name = track.label.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-            var_stream_parts.push(format!(
-                "a:{},agroup:audio,language:{},name:{},default:{}",
-                idx, lang, clean_name, default_str
-            ));
+        let var_stream_map = build_unique_var_stream_map(audio_tracks);
+        if generation == 1 {
+            args.extend(["-master_pl_name".to_string(), "raw_master.m3u8".to_string()]);
         }
-
-        let var_stream_map = var_stream_parts.join(" ");
         args.extend([
-            "-master_pl_name".to_string(),
-            "stream.m3u8".to_string(),
             "-var_stream_map".to_string(),
             var_stream_map,
             "-hls_segment_filename".to_string(),
-            hls_dir.join("seg_%v_%03d.ts").to_string_lossy().to_string(),
-            hls_dir.join("variant_%v.m3u8").to_string_lossy().to_string(),
+            hls_dir
+                .join(format!("e{generation}_v%v_%05d.ts"))
+                .to_string_lossy()
+                .to_string(),
+            hls_dir
+                .join(format!("part_{generation}_v%v.m3u8"))
+                .to_string_lossy()
+                .to_string(),
         ]);
     } else {
-        let playlist_path = hls_dir.join("stream.m3u8");
-        let segment_pattern = hls_dir.join("seg_%03d.ts").to_string_lossy().to_string();
+        let playlist_path = hls_dir.join(format!("part_{generation}_default.m3u8"));
+        let segment_pattern = hls_dir
+            .join(format!("e{generation}_%05d.ts"))
+            .to_string_lossy()
+            .to_string();
         args.extend([
             "-hls_segment_filename".to_string(),
             segment_pattern,
@@ -581,20 +674,459 @@ fn spawn_hls_ffmpeg(
     }
 
     let mut cmd = Command::new("ffmpeg");
-    cmd.args(&args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    cmd.args(&args).stdout(Stdio::null()).stderr(Stdio::null());
 
-    cmd.spawn().map_err(|e| format!("Failed to spawn ffmpeg for HLS: {e}"))
+    cmd.spawn()
+        .map_err(|e| format!("Failed to spawn ffmpeg for HLS: {e}"))
+}
+
+async fn probe_segment_start_time(file_path: &Path) -> Option<f64> {
+    let output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=start_time",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            &file_path.to_string_lossy(),
+        ])
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.trim().parse::<f64>().ok()
+}
+
+fn parse_part_filename(name: &str) -> Option<(u64, String)> {
+    let trimmed = name.strip_prefix("part_")?.strip_suffix(".m3u8")?;
+    let (gen_str, rest) = trimmed.split_once('_')?;
+    let epoch_gen = gen_str.parse::<u64>().ok()?;
+    let variant = if rest == "default" {
+        "default".to_string()
+    } else {
+        rest.strip_prefix('v')?.to_string()
+    };
+    Some((epoch_gen, variant))
+}
+
+async fn sync_hls_segments(ctrl: &HlsController) {
+    let entries = match fs::read_dir(&ctrl.hls_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    let mut part_files: Vec<(u64, String, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if let Some((epoch_gen, variant)) = parse_part_filename(&file_name) {
+            part_files.push((epoch_gen, variant, entry.path()));
+        }
+    }
+    part_files.sort_by_key(|(epoch_gen, _, _)| *epoch_gen);
+
+    let (known_gen_keys, known_indexed_files, active_cursor_start) = {
+        let state = ctrl.state.lock().await;
+        (
+            state.gen_start_by_key.keys().cloned().collect::<HashSet<_>>(),
+            state.indexed_files.clone(),
+            state.active_cursor_start,
+        )
+    };
+
+    let mut pending_probes: Vec<(u64, String, PathBuf)> = Vec::new();
+    let mut parsed_entries: Vec<(u64, String, Vec<(f64, PathBuf)>)> = Vec::new();
+
+    for (epoch_gen, variant, path) in &part_files {
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        let mut items: Vec<(f64, PathBuf)> = Vec::new();
+        let mut i = 0;
+        while i < lines.len() {
+            if let Some(dur_raw) = lines[i].strip_prefix("#EXTINF:") {
+                let dur = dur_raw
+                    .split(',')
+                    .next()
+                    .and_then(|s| s.trim().parse::<f64>().ok())
+                    .unwrap_or(HLS_SEGMENT_DURATION);
+                if let Some(seg_name) = lines.get(i + 1).map(|s| s.trim()) {
+                    if seg_name.ends_with(".ts") {
+                        let seg_path = ctrl.hls_dir.join(seg_name);
+                        if known_indexed_files.contains(&seg_path) || seg_path.exists() {
+                            items.push((dur, seg_path));
+                        }
+                    }
+                }
+                i += 2;
+                continue;
+            }
+            i += 1;
+        }
+        if let Some((_, first_path)) = items.first() {
+            if !known_gen_keys.contains(&(*epoch_gen, variant.clone())) {
+                pending_probes.push((*epoch_gen, variant.clone(), first_path.clone()));
+            }
+        }
+        parsed_entries.push((*epoch_gen, variant.clone(), items));
+    }
+
+    let mut probed_starts: HashMap<(u64, String), Option<f64>> = HashMap::new();
+    for (epoch_gen, variant, seg_path) in pending_probes {
+        let raw_start = probe_segment_start_time(&seg_path).await;
+        probed_starts.insert((epoch_gen, variant), raw_start);
+    }
+
+    let mut state = ctrl.state.lock().await;
+    for ((epoch_gen, variant), raw_start_opt) in probed_starts {
+        let Some(raw_start) = raw_start_opt else {
+            let fallback_start = if epoch_gen == 1 { 0.0 } else { active_cursor_start };
+            state
+                .gen_start_by_key
+                .entry((epoch_gen, variant))
+                .or_insert(fallback_start);
+            continue;
+        };
+        if epoch_gen == 1 && !state.base_mux_offset_by_variant.contains_key(&variant) {
+            state
+                .base_mux_offset_by_variant
+                .insert(variant.clone(), raw_start);
+        }
+        let base_mux = state
+            .base_mux_offset_by_variant
+            .get(&variant)
+            .or_else(|| state.base_mux_offset_by_variant.get("0"))
+            .or_else(|| state.base_mux_offset_by_variant.get("default"))
+            .or_else(|| state.base_mux_offset_by_variant.values().next())
+            .copied()
+            .unwrap_or(raw_start);
+        state
+            .gen_start_by_key
+            .insert((epoch_gen, variant), (raw_start - base_mux).max(0.0));
+    }
+
+    for (epoch_gen, variant, items) in parsed_entries {
+        let Some(&base_start) = state.gen_start_by_key.get(&(epoch_gen, variant.clone())) else {
+            continue;
+        };
+        let mut cursor = base_start;
+        for (dur, seg_path) in items {
+            let end = cursor + dur;
+            if !state.indexed_files.contains(&seg_path) {
+                state.indexed_files.insert(seg_path.clone());
+                state
+                    .segments_by_variant
+                    .entry(variant.clone())
+                    .or_default()
+                    .push(HlsRealSegment {
+                        file_path: seg_path,
+                        start_sec: cursor,
+                        end_sec: end,
+                        generation: epoch_gen,
+                    });
+            }
+            cursor = end;
+        }
+    }
+}
+
+fn find_segment_for_time(segments: &[HlsRealSegment], target_sec: f64) -> Option<HlsRealSegment> {
+    let mut best_match: Option<&HlsRealSegment> = None;
+    for seg in segments {
+        if seg.start_sec <= target_sec + 0.05 && target_sec < seg.end_sec - 0.05 {
+            if best_match.map_or(true, |b| seg.generation > b.generation) {
+                best_match = Some(seg);
+            }
+        }
+    }
+    if let Some(found) = best_match {
+        return Some(found.clone());
+    }
+    let mut fallback: Option<&HlsRealSegment> = None;
+    for seg in segments {
+        if (seg.start_sec - target_sec).abs() <= 2.5 {
+            if fallback.map_or(true, |b| seg.generation > b.generation) {
+                fallback = Some(seg);
+            }
+        }
+    }
+    fallback.cloned()
+}
+
+pub fn build_virtual_vod_playlist(duration: f64, seg_prefix: &str) -> String {
+    let total_segs = if duration > 0.0 {
+        ((duration / HLS_SEGMENT_DURATION).ceil() as usize).max(1)
+    } else {
+        1
+    };
+    let mut out = format!(
+        "#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-TARGETDURATION:{HLS_TARGET_DURATION}\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n"
+    );
+    for i in 0..total_segs {
+        let seg_dur = if duration > 0.0 {
+            (duration - (i as f64) * HLS_SEGMENT_DURATION).clamp(0.1, HLS_SEGMENT_DURATION)
+        } else {
+            HLS_SEGMENT_DURATION
+        };
+        out.push_str(&format!("#EXTINF:{seg_dur:.3},\n{seg_prefix}_{i:05}.ts\n"));
+    }
+    out.push_str("#EXT-X-ENDLIST\n");
+    out
+}
+
+pub fn rewrite_master_playlist_for_vod(raw_master: &str) -> String {
+    static MASTER_PART_RE: OnceLock<Regex> = OnceLock::new();
+    let re = MASTER_PART_RE.get_or_init(|| Regex::new(r"part_1_v([^\s\x22']+)\.m3u8").unwrap());
+    re.replace_all(raw_master, "vod_v$1.m3u8").into_owned()
+}
+
+async fn jump_ffmpeg_if_needed(
+    ctrl: &Arc<HlsController>,
+    variant: &str,
+    target_sec: f64,
+    force_check_active: bool,
+) -> Option<(u64, Option<PathBuf>)> {
+    let _spawn_guard = ctrl.spawn_lock.lock().await;
+    sync_hls_segments(ctrl).await;
+
+    let old_child: Option<tokio::process::Child>;
+    let next_gen: u64;
+    let jump_start: f64;
+
+    {
+        let mut state = ctrl.state.lock().await;
+        if state.shutdown {
+            return None;
+        }
+        if let Some(segments) = state.segments_by_variant.get(variant) {
+            if let Some(found) = find_segment_for_time(segments, target_sec) {
+                return Some((found.generation, Some(found.file_path)));
+            }
+        }
+        let max_active = state
+            .segments_by_variant
+            .get(variant)
+            .map(|segs| {
+                segs.iter()
+                    .filter(|s| s.generation == state.generation)
+                    .map(|s| s.end_sec)
+                    .fold(state.active_cursor_start, f64::max)
+            })
+            .unwrap_or(state.active_cursor_start);
+
+        let needs_jump = target_sec < state.active_cursor_start
+            || (force_check_active && target_sec > max_active + HLS_PREFETCH_LOOKAHEAD_SECS);
+        if !needs_jump {
+            return Some((state.generation, None));
+        }
+
+        old_child = state.ffmpeg_child.take();
+        state.generation += 1;
+        next_gen = state.generation;
+        jump_start = (target_sec - HLS_JUMP_LOOKBEHIND_SECS).max(0.0);
+        state.active_cursor_start = jump_start;
+    }
+
+    if let Some(mut child) = old_child {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+    }
+
+    let new_child = match spawn_hls_ffmpeg(
+        &ctrl.video_path,
+        &ctrl.hls_dir,
+        jump_start,
+        next_gen,
+        ctrl.needs_video_transcode,
+        &ctrl.audio_tracks,
+    ) {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+
+    {
+        let mut state = ctrl.state.lock().await;
+        if state.shutdown {
+            drop(state);
+            let mut c = new_child;
+            let _ = c.kill().await;
+            let _ = c.wait().await;
+            return None;
+        }
+        if state.generation == next_gen {
+            state.ffmpeg_child = Some(new_child);
+        } else {
+            let mut c = new_child;
+            let _ = c.kill().await;
+        }
+    }
+
+    Some((next_gen, None))
+}
+
+async fn ensure_hls_segment(
+    ctrl: &Arc<HlsController>,
+    variant: &str,
+    target_sec: f64,
+) -> Option<PathBuf> {
+    sync_hls_segments(ctrl).await;
+    {
+        let state = ctrl.state.lock().await;
+        if let Some(segments) = state.segments_by_variant.get(variant) {
+            if let Some(found) = find_segment_for_time(segments, target_sec) {
+                return Some(found.file_path);
+            }
+        }
+    }
+
+    let (wait_gen, immediate) = jump_ffmpeg_if_needed(ctrl, variant, target_sec, true).await?;
+    if let Some(path) = immediate {
+        return Some(path);
+    }
+
+    let deadline = Instant::now() + Duration::from_millis(HLS_SEGMENT_WAIT_TIMEOUT_MS);
+    while Instant::now() < deadline {
+        sync_hls_segments(ctrl).await;
+        let mut child_finished = false;
+        {
+            let mut state = ctrl.state.lock().await;
+            if state.shutdown || state.generation != wait_gen {
+                return None;
+            }
+            if let Some(segments) = state.segments_by_variant.get(variant) {
+                if let Some(found) = find_segment_for_time(segments, target_sec) {
+                    return Some(found.file_path);
+                }
+            }
+            if let Some(child) = state.ffmpeg_child.as_mut() {
+                if let Ok(Some(_)) = child.try_wait() {
+                    child_finished = true;
+                }
+            }
+        }
+        if child_finished {
+            sync_hls_segments(ctrl).await;
+            let state = ctrl.state.lock().await;
+            return state
+                .segments_by_variant
+                .get(variant)
+                .and_then(|segs| find_segment_for_time(segs, target_sec))
+                .map(|s| s.file_path);
+        }
+        tokio::time::sleep(Duration::from_millis(60)).await;
+    }
+
+    None
+}
+
+async fn serve_hls_request(
+    AxumState(ctrl): AxumState<Arc<HlsController>>,
+    AxumPath(file): AxumPath<String>,
+) -> impl IntoResponse {
+    if file.is_empty() || file.contains("..") || file.contains('/') || file.contains('\\') {
+        return (StatusCode::BAD_REQUEST, "Invalid path").into_response();
+    }
+
+    if file == "stream.m3u8" {
+        if ctrl.audio_tracks.len() > 1 {
+            let raw_master_path = ctrl.hls_dir.join("raw_master.m3u8");
+            if let Ok(raw) = tokio_fs::read_to_string(raw_master_path).await {
+                let body = rewrite_master_playlist_for_vod(&raw);
+                return (
+                    StatusCode::OK,
+                    [(CONTENT_TYPE, "application/vnd.apple.mpegurl")],
+                    body,
+                )
+                    .into_response();
+            }
+            return (StatusCode::NOT_FOUND, "Playlist not ready").into_response();
+        }
+        let body = build_virtual_vod_playlist(ctrl.duration, "vod_default");
+        return (
+            StatusCode::OK,
+            [(CONTENT_TYPE, "application/vnd.apple.mpegurl")],
+            body,
+        )
+            .into_response();
+    }
+
+    if let Some(variant) = file.strip_prefix("vod_v").and_then(|s| s.strip_suffix(".m3u8")) {
+        let prefix = format!("vod_v{variant}");
+        let body = build_virtual_vod_playlist(ctrl.duration, &prefix);
+        return (
+            StatusCode::OK,
+            [(CONTENT_TYPE, "application/vnd.apple.mpegurl")],
+            body,
+        )
+            .into_response();
+    }
+
+    if let Some(stem) = file.strip_prefix("vod_").and_then(|s| s.strip_suffix(".ts")) {
+        if let Some((var_part, idx_str)) = stem.rsplit_once('_') {
+            if let Ok(seg_idx) = idx_str.parse::<usize>() {
+                let variant = if var_part == "default" {
+                    "default"
+                } else {
+                    var_part.strip_prefix('v').unwrap_or(var_part)
+                };
+                let target_sec = (seg_idx as f64) * HLS_SEGMENT_DURATION;
+                if let Some(seg_path) = ensure_hls_segment(&ctrl, variant, target_sec).await {
+                    if let Ok(bytes) = tokio_fs::read(&seg_path).await {
+                        return (StatusCode::OK, [(CONTENT_TYPE, "video/mp2t")], bytes)
+                            .into_response();
+                    }
+                }
+                return (StatusCode::SERVICE_UNAVAILABLE, "Segment generating").into_response();
+            }
+        }
+    }
+
+    let static_path = ctrl.hls_dir.join(&file);
+    if let Ok(bytes) = tokio_fs::read(&static_path).await {
+        let content_type = if file.ends_with(".vtt") {
+            "text/vtt; charset=utf-8"
+        } else if file.ends_with(".json") {
+            "application/json"
+        } else if file.ends_with(".m3u8") {
+            "application/vnd.apple.mpegurl"
+        } else if file.ends_with(".ts") {
+            "video/mp2t"
+        } else {
+            "application/octet-stream"
+        };
+        return (StatusCode::OK, [(CONTENT_TYPE, content_type)], bytes).into_response();
+    }
+
+    (StatusCode::NOT_FOUND, "Not found").into_response()
 }
 
 #[tauri::command]
 pub async fn seek_hls_stream(
-    _state: tauri::State<'_, SharedTunnelState>,
-    _target_seconds: f64,
+    state: tauri::State<'_, SharedTunnelState>,
+    target_seconds: f64,
 ) -> Result<bool, String> {
-    // Hls.js client handles seeking across the generated segments smoothly.
-    // Deleting active segments from disk causes fatal 404s and freezes playback.
+    let ctrl = {
+        let guard = state.lock().await;
+        guard.hls_controller.clone()
+    };
+    let Some(ctrl) = ctrl else {
+        return Ok(true);
+    };
+    let primary_variant = if ctrl.audio_tracks.len() > 1 {
+        "0"
+    } else {
+        "default"
+    };
+    let clamped_target = if ctrl.duration > 0.0 {
+        target_seconds.clamp(0.0, ctrl.duration)
+    } else {
+        target_seconds.max(0.0)
+    };
+    let _ = jump_ffmpeg_if_needed(&ctrl, primary_variant, clamped_target, true).await;
     Ok(true)
 }
 
@@ -701,6 +1233,7 @@ pub async fn start_host_tunnel(
 
     let mut is_hls = false;
     let mut active_hls_dir: Option<PathBuf> = None;
+    let mut active_hls_controller: Option<Arc<HlsController>> = None;
 
     if selected_mode == "hls" {
         is_hls = true;
@@ -762,6 +1295,7 @@ pub async fn start_host_tunnel(
             &file_path,
             &hls_dir,
             0.0,
+            1,
             probe.needs_video_transcode,
             &probe.audio_tracks,
         ) {
@@ -772,33 +1306,74 @@ pub async fn start_host_tunnel(
             }
         };
 
+        let controller = Arc::new(HlsController {
+            video_path: file_path.clone(),
+            hls_dir: hls_dir.clone(),
+            duration,
+            needs_video_transcode: probe.needs_video_transcode,
+            audio_tracks: probe.audio_tracks.clone(),
+            state: Mutex::new(HlsRuntimeState {
+                ffmpeg_child: Some(child),
+                generation: 1,
+                active_cursor_start: 0.0,
+                base_mux_offset_by_variant: HashMap::new(),
+                gen_start_by_key: HashMap::new(),
+                segments_by_variant: HashMap::new(),
+                indexed_files: HashSet::new(),
+                shutdown: false,
+            }),
+            spawn_lock: Mutex::new(()),
+        });
+
         {
             let mut guard = state.lock().await;
-            guard.ffmpeg_child = Some(child);
+            guard.hls_controller = Some(controller.clone());
             guard.hls_dir = Some(hls_dir.clone());
             guard.current_video_path = Some(file_path.clone());
             guard.stream_mode = Some("hls".to_string());
             guard.needs_video_transcode = probe.needs_video_transcode;
         }
 
-        let playlist_path = hls_dir.join("stream.m3u8");
+        let primary_variant = if probe.audio_tracks.len() > 1 {
+            "0"
+        } else {
+            "default"
+        };
+        let multi_audio = probe.audio_tracks.len() > 1;
+        let master_path = hls_dir.join("raw_master.m3u8");
         let mut playlist_ready = false;
-        for _ in 0..50 {
-            if playlist_path.exists() {
+
+        for _ in 0..80 {
+            sync_hls_segments(&controller).await;
+            let has_master = !multi_audio || master_path.exists();
+            let (has_primary_seg, failed_status) = {
+                let mut h_state = controller.state.lock().await;
+                let has_seg = h_state
+                    .segments_by_variant
+                    .get(primary_variant)
+                    .map_or(false, |v| !v.is_empty());
+                let exited = if !has_seg {
+                    h_state
+                        .ffmpeg_child
+                        .as_mut()
+                        .and_then(|c| c.try_wait().ok().flatten())
+                } else {
+                    None
+                };
+                (has_seg, exited)
+            };
+
+            if has_master && has_primary_seg {
                 playlist_ready = true;
                 break;
             }
-            {
-                let mut guard = state.lock().await;
-                if let Some(child) = guard.ffmpeg_child.as_mut() {
-                    if let Ok(Some(status)) = child.try_wait() {
-                        drop(guard);
-                        cleanup_tunnel(&state).await;
-                        return Err(format!("FFmpeg failed to initialize HLS stream (exit code: {status})"));
-                    }
-                }
+            if let Some(status) = failed_status {
+                cleanup_tunnel(&state).await;
+                return Err(format!(
+                    "FFmpeg failed to initialize HLS stream (exit code: {status})"
+                ));
             }
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         if !playlist_ready {
@@ -807,6 +1382,7 @@ pub async fn start_host_tunnel(
         }
 
         active_hls_dir = Some(hls_dir);
+        active_hls_controller = Some(controller);
     } else {
         let mut guard = state.lock().await;
         guard.current_video_path = Some(file_path.clone());
@@ -858,8 +1434,11 @@ pub async fn start_host_tunnel(
         .route_service("/video", video_service.clone())
         .route_service("/video/", video_service);
 
-    if let Some(ref h_dir) = active_hls_dir {
-        router = router.nest_service("/hls", ServeDir::new(h_dir));
+    if let Some(ctrl) = active_hls_controller {
+        router = router.route(
+            "/hls/{file}",
+            axum::routing::get(serve_hls_request).with_state(ctrl),
+        );
     }
 
     let cors = CorsLayer::permissive()

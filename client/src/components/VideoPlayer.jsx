@@ -705,6 +705,10 @@ const VideoPlayer = forwardRef(function VideoPlayer(
               lowLatencyMode: false,
               maxBufferLength: 30,
               maxMaxBufferLength: 60,
+              fragLoadingTimeOut: 25000,
+              fragLoadingMaxRetry: 8,
+              fragLoadingRetryDelay: 500,
+              nudgeMaxRetry: 10,
             });
             hls.loadSource(url);
             hls.attachMedia(video);
@@ -1441,6 +1445,15 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     }
   }, []);
 
+  const lastHlsKickRef = useRef(0);
+  const kickHlsLoad = useCallback((art, targetTime) => {
+    if (!art?.hls) return;
+    const now = Date.now();
+    if (now - lastHlsKickRef.current < 4000) return;
+    lastHlsKickRef.current = now;
+    art.hls.startLoad(targetTime);
+  }, []);
+
   useImperativeHandle(ref, () => ({
     handleSyncMessage(wsMsg) {
       if (!wsMsg || !artRef.current) return;
@@ -1562,6 +1575,9 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           if (isHostRef.current) break;
           seekSyncSafe(target);
           setRateSafe(1.0);
+          if (hostPlayingRef.current && art.video?.paused) {
+            playWithMutedFallback();
+          }
           break;
         }
 
@@ -1587,7 +1603,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
             break;
           }
 
-          if (!art.video || art.video.seeking || art.video.readyState < 3) break;
+          if (!art.video) break;
 
           const currentAbsolute = art.currentTime;
           const networkLatency = wsMsg.serverTime
@@ -1599,8 +1615,28 @@ const VideoPlayer = forwardRef(function VideoPlayer(
 
           if (Math.abs(drift) > HARD_SEEK_THRESHOLD) {
             seekSyncSafe(expected);
+            if (art.hls && art.video.readyState < 3) {
+              kickHlsLoad(art, expected);
+            }
             setRateSafe(1.0);
-          } else if (Math.abs(drift) > CATCHUP_THRESHOLD) {
+            if (art.video.paused) {
+              playWithMutedFallback();
+            }
+            break;
+          }
+
+          if (art.video.seeking || art.video.readyState < 3) {
+            if (art.hls && !art.video.seeking && art.video.readyState < 2) {
+              kickHlsLoad(art, expected);
+            }
+            break;
+          }
+
+          if (art.video.paused) {
+            playWithMutedFallback();
+          }
+
+          if (Math.abs(drift) > CATCHUP_THRESHOLD) {
             setRateSafe(drift > 0 ? 0.95 : 1.05);
           } else {
             setRateSafe(1.0);
