@@ -350,10 +350,13 @@ export default function Room() {
 
   const handleSeek = useCallback(
     (position) => {
+      if (isHost) {
+        window.desktopAPI?.seekHlsStream?.(position).catch(() => {});
+      }
       send('seek', { position });
       applyMessage({ type: 'seek', position });
     },
-    [send, applyMessage]
+    [isHost, send, applyMessage]
   );
 
   const lastTimeUpdateSentRef = useRef(0);
