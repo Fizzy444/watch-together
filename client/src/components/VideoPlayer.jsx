@@ -735,11 +735,25 @@ const VideoPlayer = forwardRef(function VideoPlayer(
               }
             };
 
+            let networkRetryCount = 0;
+            let networkRetryTimer = null;
+            artInstance.hlsCleanupRetry = () => {
+              if (networkRetryTimer) {
+                clearTimeout(networkRetryTimer);
+                networkRetryTimer = null;
+              }
+            };
+
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
+              networkRetryCount = 0;
               if (effectiveDurationRef.current > 0) {
                 artInstance.emit('video:progress');
               }
               handleAudioTracks();
+            });
+
+            hls.on(Hls.Events.FRAG_LOADED, () => {
+              networkRetryCount = 0;
             });
 
             hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
@@ -753,19 +767,36 @@ const VideoPlayer = forwardRef(function VideoPlayer(
             });
 
             hls.on(Hls.Events.ERROR, (_event, data) => {
-              if (data.fatal) {
-                switch (data.type) {
-                  case Hls.ErrorTypes.NETWORK_ERROR:
-                    hls.startLoad();
-                    break;
-                  case Hls.ErrorTypes.MEDIA_ERROR:
-                    hls.recoverMediaError();
-                    break;
-                  default:
+              if (!data.fatal) return;
+              switch (data.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                  if (networkRetryCount < 5) {
+                    networkRetryCount += 1;
+                    const delayMs = Math.min(1500 * networkRetryCount, 5000);
+                    const isManifestErr =
+                      data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR ||
+                      data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT;
+                    if (networkRetryTimer) clearTimeout(networkRetryTimer);
+                    networkRetryTimer = setTimeout(() => {
+                      if (!artInstance.hls) return;
+                      if (isManifestErr) {
+                        hls.loadSource(url);
+                      } else {
+                        hls.startLoad();
+                      }
+                    }, delayMs);
+                  } else {
+                    artInstance.notice.show = 'Unable to reach host stream. Please check connection.';
                     onPlaybackErrorRef.current?.(data, url);
-                    hls.destroy();
-                    break;
-                }
+                  }
+                  break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                  hls.recoverMediaError();
+                  break;
+                default:
+                  onPlaybackErrorRef.current?.(data, url);
+                  hls.destroy();
+                  break;
               }
             });
           } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -827,7 +858,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
         art.emit('video:durationchange');
       }
       updateSubtitleButtonActive(art, art.subtitle?.show);
-      if (pendingInitialTime.current > 0 && !hasInitializedTime.current) {
+      if (pendingInitialTime.current > 0 && !hasInitializedTime.current && art.video?.readyState >= 1) {
         isSyncSeekingRef.current = true;
         art.currentTime = pendingInitialTime.current;
         hasInitializedTime.current = true;
@@ -835,7 +866,11 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           isSyncSeekingRef.current = false;
         }, 250);
       }
-      if (pendingInitialPlaying.current) {
+      if (pendingInitialPlaying.current && art.video?.readyState >= 1) {
+        isRemoteSyncActionRef.current = true;
+        setTimeout(() => {
+          isRemoteSyncActionRef.current = false;
+        }, 250);
         art.play().catch(() => {
           art.muted = true;
           setMuted(true);
@@ -934,6 +969,26 @@ const VideoPlayer = forwardRef(function VideoPlayer(
       if (effectiveDurationRef.current > 0) {
         art.emit('video:progress');
       }
+      if (pendingInitialTime.current > 0 && !hasInitializedTime.current) {
+        isSyncSeekingRef.current = true;
+        art.currentTime = pendingInitialTime.current;
+        hasInitializedTime.current = true;
+        setTimeout(() => {
+          isSyncSeekingRef.current = false;
+        }, 250);
+      }
+      if (pendingInitialPlaying.current) {
+        isRemoteSyncActionRef.current = true;
+        setTimeout(() => {
+          isRemoteSyncActionRef.current = false;
+        }, 250);
+        art.play().catch(() => {
+          art.muted = true;
+          setMuted(true);
+          setAutoplayMuted(true);
+          art.play().catch(() => {});
+        });
+      }
     });
 
     art.on('video:play', () => {
@@ -1013,6 +1068,9 @@ const VideoPlayer = forwardRef(function VideoPlayer(
         videoEl.removeEventListener('click', handleViewerVideoClick, true);
       }
       backdropEl.remove();
+      if (art.hlsCleanupRetry) {
+        art.hlsCleanupRetry();
+      }
       if (art.hls) {
         art.hls.destroy();
         art.hls = null;
@@ -1612,10 +1670,19 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           }
           if (isHostRef.current) break;
           if (pendingPauseTarget.current !== null) break;
+          if (!art.video) break;
+
+          if (art.video.readyState < 1) {
+            if (!hasInitializedTime.current && typeof wsMsg.position === 'number') {
+              pendingInitialTime.current = wsMsg.position;
+              pendingInitialPlaying.current = Boolean(wsMsg.playing);
+            }
+            break;
+          }
 
           if (!wsMsg.playing) {
-            if (!art.video?.paused) {
-              art.pause();
+            if (!art.video.paused) {
+              pauseSyncSafe();
             }
             if (
               typeof wsMsg.position === 'number' &&
@@ -1626,8 +1693,6 @@ const VideoPlayer = forwardRef(function VideoPlayer(
             setRateSafe(1.0);
             break;
           }
-
-          if (!art.video) break;
 
           const currentAbsolute = art.currentTime;
           const networkLatency = wsMsg.serverTime

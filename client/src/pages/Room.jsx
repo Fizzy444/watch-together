@@ -568,9 +568,11 @@ export default function Room() {
   const serverUrl = getServerUrl() || DEFAULT_SERVER_URL;
   const videoSrc = isTunnel
     ? ((isHost && hostLocalStreamUrl) ? hostLocalStreamUrl : room.movie)
-    : (streamReady
-        ? `${serverUrl}/api/rooms/${roomId}/stream/index.m3u8`
-        : null);
+    : (isP2P
+        ? null
+        : (streamReady
+            ? `${serverUrl}/api/rooms/${roomId}/stream/index.m3u8`
+            : null));
 
   return (
     <div className="room-page-wrapper">
