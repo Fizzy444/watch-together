@@ -1,8 +1,13 @@
 import { memo } from 'react';
-import { Users } from 'lucide-react';
+import { Users, Shield, ShieldOff } from 'lucide-react';
 
-function UserList({ users = [], hostId, currentUserId }) {
-  // Deduplicate by id
+function UserList({
+  users = [],
+  hostId,
+  currentUserId,
+  canManageAdmins = false,
+  onToggleAdmin,
+}) {
   const uniqueUsers = Array.from(new Map(users.map((u) => [u.id, u])).values());
 
   return (
@@ -18,6 +23,8 @@ function UserList({ users = [], hostId, currentUserId }) {
         {uniqueUsers.map((user) => {
           const isMe = currentUserId && user.id === currentUserId;
           const isUserHost = user.isHost || user.id === hostId;
+          const isUserAdmin = !isUserHost && Boolean(user.isAdmin);
+          const showAdminToggle = canManageAdmins && !isMe && !isUserHost && Boolean(onToggleAdmin);
 
           return (
             <div key={user.id} className="user-item">
@@ -41,7 +48,27 @@ function UserList({ users = [], hostId, currentUserId }) {
                     Host
                   </span>
                 )}
+                {isUserAdmin && (
+                  <span
+                    className="badge badge-info"
+                    style={{ fontSize: '0.625rem', padding: '1px 5px' }}
+                  >
+                    Admin
+                  </span>
+                )}
               </div>
+              {showAdminToggle && (
+                <button
+                  type="button"
+                  className={`user-role-btn ${isUserAdmin ? 'is-admin' : ''}`}
+                  onClick={() => onToggleAdmin(user.id, !isUserAdmin)}
+                  title={isUserAdmin ? 'Remove Admin' : 'Make Admin'}
+                  aria-label={isUserAdmin ? `Remove admin from ${user.name}` : `Make ${user.name} admin`}
+                >
+                  {isUserAdmin ? <ShieldOff size={12} /> : <Shield size={12} />}
+                  <span>{isUserAdmin ? 'Remove' : 'Make Admin'}</span>
+                </button>
+              )}
             </div>
           );
         })}

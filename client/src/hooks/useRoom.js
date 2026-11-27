@@ -53,7 +53,23 @@ export function useRoom(initialRoom) {
           if (!r) return r;
           return {
             ...r,
-            users: r.users.map((u) => (u.id === msg.user.id ? { ...u, name: msg.user.name } : u)),
+            users: r.users.map((u) =>
+              u.id === msg.user.id
+                ? { ...u, name: msg.user.name, isAdmin: msg.user.isAdmin ?? u.isAdmin }
+                : u
+            ),
+          };
+        });
+        break;
+
+      case 'admin_changed':
+        setRoom((r) => {
+          if (!r) return r;
+          return {
+            ...r,
+            users: r.users.map((u) =>
+              u.id === msg.userId ? { ...u, isAdmin: Boolean(msg.isAdmin) } : u
+            ),
           };
         });
         break;
@@ -77,6 +93,7 @@ export function useRoom(initialRoom) {
             users: r.users.map((u) => ({
               ...u,
               isHost: u.id === msg.newHostId,
+              isAdmin: u.id === msg.newHostId ? false : Boolean(u.isAdmin),
             })),
           };
         });

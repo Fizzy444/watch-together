@@ -3,6 +3,7 @@ import {
   getRoom,
   addUser,
   removeUser,
+  setUserAdmin,
   broadcast,
   roomPublicView,
   addChatMessage,
@@ -70,7 +71,7 @@ export function handleConnection(ws, req) {
   }
 
   // Add or reconnect user in room
-  const user = { id: clientId, name: userName, isHost: false, ws };
+  const user = { id: clientId, name: userName, isHost: false, isAdmin: false, ws };
   const result = addUser(roomId, user);
   if (!result) {
     ws.send(JSON.stringify({ type: 'error', message: 'Failed to join room' }));
@@ -93,7 +94,7 @@ export function handleConnection(ws, req) {
   if (!isReconnect) {
     broadcast(roomId, {
       type: 'user_joined',
-      user: { id: clientId, name: userName, isHost: user.isHost },
+      user: { id: clientId, name: userName, isHost: user.isHost, isAdmin: Boolean(user.isAdmin) },
     }, clientId);
   }
 
@@ -112,20 +113,26 @@ export function handleConnection(ws, req) {
     const currentRoom = getRoom(currentRoomId);
     if (!currentRoom) return;
 
-    // Check host by clientId or if user is flagged isHost
-    const isHost = currentRoom.hostId === clientId || currentRoom.users.some((u) => u.id === clientId && u.isHost);
+    const currentUser = currentRoom.users.find((u) => u.id === clientId);
+    const isHost = currentRoom.hostId === clientId || Boolean(currentUser?.isHost);
+    const isAdmin = Boolean(currentUser?.isAdmin || currentRoom.adminIds?.has(clientId));
+    const canControlPlayback = isHost || isAdmin;
 
     switch (msg.type) {
       case 'update_name': {
         const newName = typeof msg.name === 'string' ? msg.name.trim() : '';
         if (!newName) return;
         userName = newName;
-        const userInRoom = currentRoom.users.find((u) => u.id === clientId);
-        if (userInRoom) {
-          userInRoom.name = newName;
+        if (currentUser) {
+          currentUser.name = newName;
           broadcast(currentRoomId, {
             type: 'user_updated',
-            user: { id: clientId, name: newName, isHost: userInRoom.isHost },
+            user: {
+              id: clientId,
+              name: newName,
+              isHost: currentUser.isHost,
+              isAdmin: Boolean(currentUser.isAdmin),
+            },
           });
         }
         break;
@@ -151,8 +158,8 @@ export function handleConnection(ws, req) {
       }
 
       case 'play': {
-        if (!isHost) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Only the host can control playback' }));
+        if (!canControlPlayback) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Only the host or an admin can control playback' }));
           return;
         }
         currentRoom.playing = true;
@@ -164,13 +171,14 @@ export function handleConnection(ws, req) {
           position: currentRoom.currentTime,
           serverTime: Date.now(),
           initiator: userName,
+          initiatorId: clientId,
         });
         break;
       }
 
       case 'pause': {
-        if (!isHost) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Only the host can control playback' }));
+        if (!canControlPlayback) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Only the host or an admin can control playback' }));
           return;
         }
         currentRoom.playing = false;
@@ -180,13 +188,14 @@ export function handleConnection(ws, req) {
           type: 'pause',
           position: currentRoom.currentTime,
           initiator: userName,
+          initiatorId: clientId,
         });
         break;
       }
 
       case 'seek': {
-        if (!isHost) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Only the host can control playback' }));
+        if (!canControlPlayback) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Only the host or an admin can control playback' }));
           return;
         }
         currentRoom.currentTime = msg.position ?? currentRoom.currentTime;
@@ -195,7 +204,26 @@ export function handleConnection(ws, req) {
           type: 'seek',
           position: currentRoom.currentTime,
           initiator: userName,
+          initiatorId: clientId,
         });
+        break;
+      }
+
+      case 'set_admin': {
+        if (!isHost) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Only the host can manage admin roles' }));
+          return;
+        }
+        const targetUserId = typeof msg.targetUserId === 'string' ? msg.targetUserId : '';
+        const updatedUser = setUserAdmin(currentRoomId, targetUserId, Boolean(msg.isAdmin));
+        if (updatedUser) {
+          broadcast(currentRoomId, {
+            type: 'admin_changed',
+            userId: updatedUser.id,
+            userName: updatedUser.name,
+            isAdmin: updatedUser.isAdmin,
+          });
+        }
         break;
       }
 
