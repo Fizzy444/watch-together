@@ -364,6 +364,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     torrentMagnet = null,
     onStreamReady = null,
     isHost = false,
+    canControl,
     initialTime = 0,
     initialPlaying = false,
     wasPlayingBeforeDisconnect: _wasPlayingBeforeDisconnect = false,
@@ -374,6 +375,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
   },
   ref
 ) {
+  const effectiveCanControl = canControl ?? isHost;
   const containerRef = useRef(null);
   const artRef = useRef(null);
   const hiddenSubFileInputRef = useRef(null);
@@ -382,6 +384,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
 
   const onPlaybackErrorRef = useRef(onPlaybackError);
   const isHostRef = useRef(isHost);
+  const canControlRef = useRef(effectiveCanControl);
   const onPlayRef = useRef(onPlay);
   const onPauseRef = useRef(onPause);
   const onSeekRef = useRef(onSeek);
@@ -403,6 +406,8 @@ const VideoPlayer = forwardRef(function VideoPlayer(
   const hostPlayingRef = useRef(Boolean(initialPlaying));
   const hostPositionRef = useRef(Number(initialTime) || 0);
   const isSyncSeekingRef = useRef(false);
+  const isRemoteSyncActionRef = useRef(false);
+  const remoteSyncTimerRef = useRef(null);
   const pendingPauseTarget = useRef(null);
   const pendingPauseTimer = useRef(null);
   const isSettingOpenRef = useRef(false);
@@ -412,11 +417,12 @@ const VideoPlayer = forwardRef(function VideoPlayer(
   useEffect(() => {
     onPlaybackErrorRef.current = onPlaybackError;
     isHostRef.current = isHost;
+    canControlRef.current = effectiveCanControl;
     onPlayRef.current = onPlay;
     onPauseRef.current = onPause;
     onSeekRef.current = onSeek;
     onTimeUpdateRef.current = onTimeUpdate;
-  }, [onPlaybackError, isHost, onPlay, onPause, onSeek, onTimeUpdate]);
+  }, [onPlaybackError, isHost, effectiveCanControl, onPlay, onPause, onSeek, onTimeUpdate]);
 
   useEffect(() => {
     detectedSubtitlesRef.current = detectedSubtitles;
@@ -914,7 +920,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
 
     const videoEl = art.template?.$video;
     const handleViewerVideoClick = (e) => {
-      if (!isHostRef.current) {
+      if (!canControlRef.current) {
         e.stopImmediatePropagation();
         e.preventDefault();
         art.controls.show = !art.controls.show;
@@ -931,7 +937,10 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     });
 
     art.on('video:play', () => {
-      if (isHostRef.current) {
+      if (isRemoteSyncActionRef.current) {
+        return;
+      }
+      if (canControlRef.current) {
         onPlayRef.current?.(art.currentTime);
         return;
       }
@@ -957,10 +966,10 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     });
 
     art.on('video:pause', () => {
-      if (isSettingOpenRef.current || isSwitchingSubtitleRef.current) {
+      if (isSettingOpenRef.current || isSwitchingSubtitleRef.current || isRemoteSyncActionRef.current) {
         return;
       }
-      if (isHostRef.current) {
+      if (canControlRef.current) {
         onPauseRef.current?.(art.currentTime);
         return;
       }
@@ -970,7 +979,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     });
 
     art.on('video:seeking', () => {
-      if (!isHostRef.current && !isSyncSeekingRef.current) {
+      if (!canControlRef.current && !isSyncSeekingRef.current) {
         if (Math.abs(art.currentTime - hostPositionRef.current) > 0.4) {
           isSyncSeekingRef.current = true;
           art.currentTime = hostPositionRef.current;
@@ -982,8 +991,8 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     });
 
     art.on('seek', (time) => {
-      if (!isHostRef.current) {
-        art.notice.show = 'Only the room host can seek';
+      if (!canControlRef.current) {
+        art.notice.show = 'Only the host or an admin can seek';
         return;
       }
       onSeekRef.current?.(time);
@@ -1023,9 +1032,9 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     const container = containerRef.current;
     const art = artRef.current;
     if (!art || !container) return;
-    container.classList.toggle('viewer-mode', !isHost);
+    container.classList.toggle('viewer-mode', !effectiveCanControl);
     if (art.hotkey?.keys) {
-      if (!isHost) {
+      if (!effectiveCanControl) {
         delete art.hotkey.keys.Space;
         delete art.hotkey.keys.ArrowLeft;
         delete art.hotkey.keys.ArrowRight;
@@ -1046,7 +1055,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
         }
       }
     }
-  }, [isHost]);
+  }, [effectiveCanControl]);
 
   useEffect(() => {
     const art = artRef.current;
@@ -1473,11 +1482,28 @@ const VideoPlayer = forwardRef(function VideoPlayer(
         }, 250);
       };
 
+      const markRemoteSyncAction = () => {
+        isRemoteSyncActionRef.current = true;
+        if (remoteSyncTimerRef.current) {
+          clearTimeout(remoteSyncTimerRef.current);
+        }
+        remoteSyncTimerRef.current = setTimeout(() => {
+          isRemoteSyncActionRef.current = false;
+        }, 250);
+      };
+
+      const pauseSyncSafe = () => {
+        markRemoteSyncAction();
+        art.pause();
+      };
+
       const playWithMutedFallback = () => {
+        markRemoteSyncAction();
         art.play().catch(() => {
           art.muted = true;
           setMuted(true);
           setAutoplayMuted(true);
+          markRemoteSyncAction();
           art.play().catch(() => {});
         });
       };
@@ -1511,7 +1537,6 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           pendingPauseTarget.current = null;
           setHostReconnecting(false);
           hostPlayingRef.current = true;
-          if (isHostRef.current) break;
 
           const currentAbsolute = art.currentTime;
           const networkLatency = wsMsg.serverTime
@@ -1537,7 +1562,6 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           if (targetPauseTime !== null) {
             hostPositionRef.current = targetPauseTime;
           }
-          if (isHostRef.current) break;
 
           const currentAbsolute = art.currentTime;
           const lag = targetPauseTime !== null ? targetPauseTime - currentAbsolute : 0;
@@ -1551,6 +1575,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
               if (pendingPauseTarget.current !== null && artRef.current) {
                 const snap = pendingPauseTarget.current;
                 pendingPauseTarget.current = null;
+                markRemoteSyncAction();
                 artRef.current.pause();
                 seekSyncSafe(snap);
               }
@@ -1558,7 +1583,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           } else {
             clearTimeout(pendingPauseTimer.current);
             pendingPauseTarget.current = null;
-            art.pause();
+            pauseSyncSafe();
             if (targetPauseTime !== null && Math.abs(art.currentTime - targetPauseTime) > 0.2) {
               seekSyncSafe(targetPauseTime);
             }
@@ -1572,7 +1597,6 @@ const VideoPlayer = forwardRef(function VideoPlayer(
           pendingPauseTarget.current = null;
           const target = wsMsg.position ?? 0;
           hostPositionRef.current = target;
-          if (isHostRef.current) break;
           seekSyncSafe(target);
           setRateSafe(1.0);
           if (hostPlayingRef.current && art.video?.paused) {

@@ -17,6 +17,7 @@ import {
   Loader2,
   AlertTriangle,
   Crown,
+  Shield,
   MessageSquare,
   Users,
   Link2,
@@ -109,6 +110,9 @@ export default function Room() {
   const handleWebRTCMessageRef = useRef(null);
   const videoPlayerRef = useRef(null);
 
+  const isTunnelRef = useRef(false);
+  const isHostRef = useRef(false);
+
   const handleMessage = useCallback(
     (msg) => {
       if (msg.type === 'user_joined' && msg.user.id !== myUserId) {
@@ -119,6 +123,10 @@ export default function Room() {
       }
       if (msg.type === 'host_changed') {
         addToast(`${msg.newHostName} is now the host`);
+      }
+      if (msg.type === 'admin_changed') {
+        const targetLabel = msg.userId === myUserId ? 'You are' : `${msg.userName} is`;
+        addToast(msg.isAdmin ? `${targetLabel} now an admin` : `${targetLabel} no longer an admin`);
       }
       if (msg.type === 'error') {
         addToast(msg.message, 'error');
@@ -138,8 +146,13 @@ export default function Room() {
       if (msg.type.startsWith("webrtc_") || msg.type === "host_changed") {
         handleWebRTCMessageRef.current?.(msg);
       }
-      // Route playback sync messages to VideoPlayer
-      if (['play', 'pause', 'seek', 'sync_tick', 'room_state'].includes(msg.type)) {
+
+      if (msg.type === 'seek' && isHostRef.current && isTunnelRef.current && msg.initiatorId !== myUserId) {
+        window.desktopAPI?.seekHlsStream?.(msg.position).catch(() => {});
+      }
+
+      const isSelfSyncEcho = ['play', 'pause', 'seek'].includes(msg.type) && msg.initiatorId === myUserId;
+      if (!isSelfSyncEcho && ['play', 'pause', 'seek', 'sync_tick', 'room_state'].includes(msg.type)) {
         videoPlayerRef.current?.handleSyncMessage(msg);
       }
             applyMessage(msg);
@@ -166,6 +179,10 @@ export default function Room() {
       (room.users && room.users.find((u) => u.id === myUserId)?.isHost)
     ))
   );
+  const isAdmin = !isHost && Boolean(room?.users?.find((u) => u.id === myUserId)?.isAdmin);
+  const canControl = isHost || isAdmin;
+  isHostRef.current = isHost;
+  isTunnelRef.current = isTunnel;
 
   // WebRTC Peer-to-Peer Engine
   const {
@@ -369,6 +386,14 @@ export default function Room() {
       }
     },
     [send]
+  );
+
+  const handleToggleAdmin = useCallback(
+    (targetUserId, nextIsAdmin) => {
+      if (!isHost) return;
+      send('set_admin', { targetUserId, isAdmin: nextIsAdmin });
+    },
+    [isHost, send]
   );
 
   const handleSendMessage = useCallback(
@@ -586,6 +611,11 @@ export default function Room() {
               <Crown size={11} />
               <span>Host</span>
             </span>
+          ) : isAdmin ? (
+            <span className="badge badge-info badge-compact room-topbar-role-badge">
+              <Shield size={11} />
+              <span>Admin</span>
+            </span>
           ) : (
             <span className="badge badge-compact room-topbar-role-badge" style={{ color: 'var(--text-3)' }}>
               Viewer
@@ -767,6 +797,7 @@ export default function Room() {
               p2pStatus={p2pStatus}
               onStreamReady={handleStreamReady}
               isHost={isHost}
+              canControl={canControl}
               initialTime={room?.currentTime || 0}
               initialPlaying={room?.playing || false}
               wasPlayingBeforeDisconnect={Boolean(room?.wasPlayingBeforeHostDisconnect || room?.hostDisconnected)}
@@ -848,7 +879,13 @@ export default function Room() {
               />
             ) : (
               <div style={{ padding: '8px 10px', flex: 1, overflowY: 'auto' }}>
-                <UserList users={room.users} hostId={room.hostId} currentUserId={myUserId} />
+                <UserList
+                  users={room.users}
+                  hostId={room.hostId}
+                  currentUserId={myUserId}
+                  canManageAdmins={isHost}
+                  onToggleAdmin={handleToggleAdmin}
+                />
               </div>
             )}
           </div>

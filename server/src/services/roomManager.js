@@ -20,6 +20,7 @@ const rooms = new Map();
  * @property {string} id
  * @property {string} name
  * @property {boolean} isHost
+ * @property {boolean} isAdmin
  * @property {import('ws').WebSocket} ws
  */
 
@@ -129,6 +130,7 @@ export function createRoom(movie, movieName, name = null, creatorId = null, stre
     lastUpdated: Date.now(),
     hostId: creatorId || null,
     creatorId: creatorId || null,
+    adminIds: new Set(),
     hostPromotionTimer: null,
     users: [],
     messages: [],
@@ -186,9 +188,11 @@ export function addUser(roomId, user) {
       } catch {}
     }
     user.isHost = existing.isHost || (room.hostId === user.id) || (room.creatorId === user.id);
+    user.isAdmin = !user.isHost && Boolean(existing.isAdmin || room.adminIds?.has(user.id));
     room.users[existingIndex] = user;
     if (user.isHost) {
       room.hostId = user.id;
+      room.adminIds?.delete(user.id);
     }
     cancelEmptyTimer(room);
     resetExpiry(room);
@@ -198,7 +202,9 @@ export function addUser(roomId, user) {
   // If this user is the room creator or recognized host, restore host
   if (room.hostId === user.id || room.creatorId === user.id) {
     user.isHost = true;
+    user.isAdmin = false;
     room.hostId = user.id;
+    room.adminIds?.delete(user.id);
     if (room.hostPromotionTimer) {
       clearTimeout(room.hostPromotionTimer);
       room.hostPromotionTimer = null;
@@ -208,9 +214,12 @@ export function addUser(roomId, user) {
     const hasHost = room.users.some((u) => u.isHost);
     if (room.users.length === 0 || !room.hostId || !hasHost) {
       user.isHost = true;
+      user.isAdmin = false;
       room.hostId = user.id;
+      room.adminIds?.delete(user.id);
     } else {
       user.isHost = false;
+      user.isAdmin = Boolean(room.adminIds?.has(user.id));
     }
   }
 
@@ -279,6 +288,29 @@ export function removeUser(roomId, userId, ws = null) {
   return room;
 }
 
+export function setUserAdmin(roomId, targetUserId, isAdmin) {
+  const room = getRoom(roomId);
+  if (!room || !targetUserId) return null;
+
+  const targetUser = room.users.find((u) => u.id === targetUserId);
+  if (!targetUser || targetUser.isHost || targetUser.id === room.hostId) {
+    return null;
+  }
+
+  if (!room.adminIds) {
+    room.adminIds = new Set();
+  }
+
+  targetUser.isAdmin = Boolean(isAdmin);
+  if (targetUser.isAdmin) {
+    room.adminIds.add(targetUserId);
+  } else {
+    room.adminIds.delete(targetUserId);
+  }
+
+  return targetUser;
+}
+
 /**
  * Add a chat message to room history (max 50 messages).
  * @param {string} roomId
@@ -335,7 +367,12 @@ export function roomPublicView(room) {
     hostId: room.hostId,
     subtitleTracks: room.subtitleTracks || [],
     audioTracks: room.audioTracks || [],
-    users: room.users.map(({ id, name, isHost }) => ({ id, name, isHost })),
+    users: room.users.map(({ id, name, isHost, isAdmin }) => ({
+      id,
+      name,
+      isHost,
+      isAdmin: Boolean(isAdmin),
+    })),
     messages: (room.messages || []).map(({ id, senderId, senderName, text, timestamp, isHost }) => ({
       id,
       senderId,

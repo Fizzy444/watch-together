@@ -1252,6 +1252,31 @@ svg.spin {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.user-role-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-accent);
+  color: var(--text-2);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
+}
+.user-role-btn:hover {
+  border-color: var(--info-border);
+  color: var(--info);
+  background: var(--info-subtle);
+}
+.user-role-btn.is-admin:hover {
+  border-color: var(--danger-border, var(--border));
+  color: var(--danger);
+  background: var(--danger-subtle, var(--bg-accent));
+}
 
 /* ── Chat System ──────────────────────────────────────────── */
 .chat-container {
