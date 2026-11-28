@@ -11,7 +11,6 @@ import {
   Film,
   Radio,
   Loader2,
-  ArrowRight,
   Globe,
   Zap,
 } from 'lucide-react';
@@ -163,8 +162,7 @@ export default function Home() {
               disabled={!directCode.trim()}
               title="Join room by code"
             >
-              <ArrowRight size={14} />
-              <span>Join</span>
+              Join
             </button>
           </form>
         </section>
@@ -255,8 +253,7 @@ export default function Home() {
                         className="btn btn-secondary btn-sm"
                         onClick={() => handleJoinRoom(r.id)}
                       >
-                        <span>Join</span>
-                        <ArrowRight size={13} />
+                        Join
                       </button>
                     </div>
                   </div>

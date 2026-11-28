@@ -67,7 +67,7 @@ function VoiceDock({
             </div>
             <span className="voice-dock-sub">
               {voiceParticipants.length > 0
-                ? `${voiceParticipants.length} in channel · ${getNoiseModeLabel(activeNoiseMode)}`
+                ? `${voiceParticipants.length} active, ${getNoiseModeLabel(activeNoiseMode)}`
                 : `${getNoiseModeLabel(activeNoiseMode)} noise suppression`}
             </span>
           </div>

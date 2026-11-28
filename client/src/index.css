@@ -175,7 +175,6 @@ p {
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   padding: var(--sp-6);
-  box-shadow: var(--shadow-sm);
   transition: border-color var(--t-fast);
 }
 
@@ -2016,7 +2015,6 @@ svg.spin {
   align-items: center;
   justify-content: center;
   margin-bottom: var(--sp-2);
-  box-shadow: 0 4px 16px var(--primary-subtle);
 }
 
 .room-join-badge {
@@ -2464,7 +2462,6 @@ svg.spin {
 
 .user-avatar.is-speaking {
   border-color: var(--success);
-  box-shadow: 0 0 0 2px var(--success-subtle);
   color: var(--text-1);
 }
 
@@ -2701,7 +2698,6 @@ svg.spin {
 }
 .voice-peer-avatar.is-speaking {
   border-color: var(--success);
-  box-shadow: 0 0 0 2px var(--success-subtle);
 }
 
 .voice-peer-name {
@@ -2913,7 +2909,6 @@ svg.spin {
 .voice-segmented-btn.is-selected {
   background: var(--bg-elevated);
   color: var(--text-1);
-  box-shadow: var(--shadow-sm);
 }
 
 .voice-slider-hints {

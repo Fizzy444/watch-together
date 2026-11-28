@@ -77,25 +77,17 @@ export default function ProfileModal({
             </p>
 
             {error && (
-              <div
-                style={{
-                  padding: 'var(--sp-2) var(--sp-3)',
-                  background: 'rgba(239, 68, 68, 0.1)',
-                  border: '1px solid var(--error)',
-                  borderRadius: 'var(--r-md)',
-                  color: 'var(--error)',
-                  fontSize: '0.75rem',
-                }}
-              >
+              <div className="modal-alert modal-alert-error">
                 {error}
               </div>
             )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-              <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-2)' }}>
+            <div className="field-group">
+              <label htmlFor="profile-username-input" className="field-label">
                 Username
               </label>
               <input
+                id="profile-username-input"
                 type="text"
                 className="input"
                 placeholder="Enter your username..."
