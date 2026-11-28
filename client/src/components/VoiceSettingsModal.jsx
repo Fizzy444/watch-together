@@ -1,10 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import {
-  X,
-  Mic,
-  Volume2,
-  SlidersHorizontal,
-} from 'lucide-react';
+import { X } from 'lucide-react';
 import {
   createVoiceInputPipeline,
   createRemotePeerAudio,
@@ -13,18 +8,18 @@ import {
 const NOISE_MODES = [
   {
     id: 'rnnoise',
-    label: 'RNNoise AI',
-    desc: 'Neural denoiser with high-pass filter and noise gate for keyboard, fan, and room noise.',
+    label: 'RNNoise',
+    desc: 'Filters keyboard, fan, and room noise. Uses more CPU.',
   },
   {
     id: 'browser',
     label: 'Standard',
-    desc: 'Built-in browser noise suppression with lighter CPU usage.',
+    desc: 'Browser noise suppression with lower CPU use.',
   },
   {
     id: 'off',
     label: 'Off',
-    desc: 'Raw unprocessed microphone audio for dedicated studio setups.',
+    desc: 'No filtering. Use with a clean mic or studio setup.',
   },
 ];
 
@@ -32,7 +27,6 @@ export default function VoiceSettingsModal({
   isOpen,
   onClose,
   voiceSettings,
-  activeNoiseMode,
   audioDevices,
   isInVoice,
   micLevel,
@@ -42,6 +36,12 @@ export default function VoiceSettingsModal({
   const [testLevel, setTestLevel] = useState(0);
   const [testError, setTestError] = useState('');
   const testCleanupRef = useRef(null);
+  const dialogRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!isOpen && testCleanupRef.current) {
@@ -49,6 +49,7 @@ export default function VoiceSettingsModal({
       testCleanupRef.current = null;
       setIsTestingMic(false);
       setTestLevel(0);
+      setTestError('');
     }
   }, [isOpen]);
 
@@ -58,6 +59,47 @@ export default function VoiceSettingsModal({
       testCleanupRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const previouslyFocused = document.activeElement;
+    dialogRef.current?.focus();
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        onCloseRef.current();
+        return;
+      }
+
+      if (event.key !== 'Tab') return;
+
+      const focusable = dialogRef.current?.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable?.length) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || document.activeElement === dialogRef.current)
+      ) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus?.();
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -95,7 +137,7 @@ export default function VoiceSettingsModal({
   }
 
   const selectedNoiseMeta =
-    NOISE_MODES.find((m) => m.id === voiceSettings.noiseSuppressionMode) || NOISE_MODES[0];
+    NOISE_MODES.find((mode) => mode.id === voiceSettings.noiseSuppressionMode) || NOISE_MODES[0];
   const displayedLevel = isTestingMic ? testLevel : (isInVoice ? micLevel : 0);
   const supportsOutputSelect =
     typeof HTMLMediaElement !== 'undefined' &&
@@ -104,34 +146,29 @@ export default function VoiceSettingsModal({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="modal-content voice-settings-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="voice-settings-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-            <SlidersHorizontal size={16} />
-            <h3>Voice Settings</h3>
-          </div>
+          <h3 id="voice-settings-title">Audio settings</h3>
           <button
             type="button"
             className="btn-icon"
             onClick={onClose}
-            aria-label="Close voice settings"
+            aria-label="Close audio settings"
           >
             <X size={16} />
           </button>
         </div>
 
-        <div className="modal-body" style={{ gap: 'var(--sp-5)' }}>
+        <div className="modal-body">
           <div className="field-group">
-            <div className="voice-setting-label-row">
-              <span className="field-label">Noise suppression</span>
-              {isInVoice && (
-                <span className="voice-setting-status">
-                  Running: {activeNoiseMode === 'rnnoise' ? 'RNNoise AI' : activeNoiseMode === 'browser' ? 'Standard' : 'Off'}
-                </span>
-              )}
-            </div>
+            <span className="field-label">Noise suppression</span>
             <div className="voice-segmented" role="group" aria-label="Noise suppression mode">
               {NOISE_MODES.map((mode) => {
                 const selected = voiceSettings.noiseSuppressionMode === mode.id;
@@ -160,7 +197,7 @@ export default function VoiceSettingsModal({
                 onClick={() => onUpdateSettings({ inputMode: 'vad' })}
                 aria-pressed={voiceSettings.inputMode === 'vad'}
               >
-                Voice Activity
+                Voice activity
               </button>
               <button
                 type="button"
@@ -168,7 +205,7 @@ export default function VoiceSettingsModal({
                 onClick={() => onUpdateSettings({ inputMode: 'ptt' })}
                 aria-pressed={voiceSettings.inputMode === 'ptt'}
               >
-                Push to Talk (Hold V)
+                Push to talk (hold V)
               </button>
             </div>
           </div>
@@ -210,10 +247,17 @@ export default function VoiceSettingsModal({
                 className={`btn btn-sm ${isTestingMic ? 'btn-danger-soft' : 'btn-secondary'}`}
                 onClick={toggleMicTest}
               >
-                {isTestingMic ? 'Stop Test' : 'Test Mic'}
+                {isTestingMic ? 'Stop test' : 'Start test'}
               </button>
             </div>
-            <div className="voice-test-meter">
+            <div
+              className="voice-test-meter"
+              role="meter"
+              aria-label={isTestingMic ? 'Microphone test level' : 'Microphone level'}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(displayedLevel)}
+            >
               <div
                 className="voice-test-meter-fill"
                 style={{ width: `${displayedLevel}%` }}
@@ -245,8 +289,7 @@ export default function VoiceSettingsModal({
 
           <div className="voice-device-grid">
             <div className="field-group">
-              <label htmlFor="voice-input-device" className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Mic size={13} />
+              <label htmlFor="voice-input-device" className="field-label">
                 Input device
               </label>
               <select
@@ -266,8 +309,7 @@ export default function VoiceSettingsModal({
 
             {supportsOutputSelect && (
               <div className="field-group">
-                <label htmlFor="voice-output-device" className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Volume2 size={13} />
+                <label htmlFor="voice-output-device" className="field-label">
                   Output device
                 </label>
                 <select

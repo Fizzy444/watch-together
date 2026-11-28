@@ -65,6 +65,7 @@
   --sp-10: 40px;
   --sp-12: 48px;
   --sp-16: 64px;
+  --tap-target: 44px;
 
   /* Radii */
   --r-sm:   4px;
@@ -192,7 +193,6 @@ p {
   line-height: 1;
   cursor: pointer;
   border: 1px solid transparent;
-  outline: none;
   transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast), transform var(--t-fast);
   white-space: nowrap;
 }
@@ -345,7 +345,6 @@ p {
   font-size: 0.875rem;
   font-family: inherit;
   transition: border-color var(--t-fast), background var(--t-fast);
-  outline: none;
 }
 .input::placeholder {
   color: var(--text-3);
@@ -2849,9 +2848,23 @@ svg.spin {
   color: var(--error);
 }
 
-/* Voice Settings Modal */
+/* Audio Settings Modal */
 .voice-settings-modal {
   max-width: 480px;
+}
+
+.voice-settings-modal .voice-segmented-btn,
+.voice-settings-modal .btn-sm,
+.voice-settings-modal .input-sm,
+.voice-settings-modal .btn-icon {
+  min-width: var(--tap-target);
+  min-height: var(--tap-target);
+}
+
+.voice-settings-modal .voice-switch::before {
+  content: '';
+  position: absolute;
+  inset: -11px -3px;
 }
 
 .voice-setting-label-row {
@@ -2859,12 +2872,6 @@ svg.spin {
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-2);
-}
-
-.voice-setting-status {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--success);
 }
 
 .voice-setting-value {

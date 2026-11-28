@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 
 function getNoiseModeLabel(mode) {
-  if (mode === 'rnnoise') return 'RNNoise AI';
+  if (mode === 'rnnoise') return 'RNNoise';
   if (mode === 'browser') return 'Standard';
   return 'Raw';
 }
@@ -77,8 +77,8 @@ function VoiceDock({
               type="button"
               className="btn-icon voice-icon-btn"
               onClick={onOpenSettings}
-              title="Voice settings"
-              aria-label="Voice settings"
+              title="Audio settings"
+              aria-label="Audio settings"
             >
               <SlidersHorizontal size={14} />
             </button>
@@ -113,8 +113,8 @@ function VoiceDock({
                 type="button"
                 className="btn-icon voice-icon-btn"
                 onClick={onOpenSettings}
-                title="Voice settings"
-                aria-label="Voice settings"
+                title="Audio settings"
+                aria-label="Audio settings"
               >
                 <SlidersHorizontal size={14} />
               </button>
