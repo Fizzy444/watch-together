@@ -680,14 +680,14 @@ export default function Room() {
         </div>
 
         <div className="room-topbar-right">
-          {/* Quick Voice Controls (accessible even in Cinema Mode & Mobile) */}
+          {/* Quick Voice Controls (Cinema Mode & Mobile; desktop sidebar already shows VoiceDock) */}
           {!voice.isInVoice ? (
             <button
               type="button"
-              className="btn btn-secondary btn-sm room-topbar-btn voice-topbar-join-btn"
+              className={`btn btn-secondary btn-sm room-topbar-btn voice-topbar-join-btn ${sidebarOpen ? 'is-sidebar-open' : ''}`}
               onClick={voice.joinVoice}
               disabled={voice.isJoining || !connected}
-              title="Join Voice Chat with RNNoise suppression"
+              title="Join Voice Chat"
               aria-label="Join voice chat"
             >
               {voice.isJoining ? <Loader2 size={14} className="spinner" /> : <PhoneCall size={14} />}
@@ -713,15 +713,17 @@ export default function Room() {
               >
                 {voice.isDeafened ? <HeadphoneOff size={14} /> : <Headphones size={14} />}
               </button>
-              <button
-                type="button"
-                className="btn btn-sm room-topbar-btn voice-topbar-btn voice-topbar-leave"
-                onClick={voice.leaveVoice}
-                title="Leave Voice Chat"
-                aria-label="Leave voice chat"
-              >
-                <PhoneOff size={14} />
-              </button>
+              {!sidebarOpen && (
+                <button
+                  type="button"
+                  className="btn btn-sm room-topbar-btn voice-topbar-btn voice-topbar-leave"
+                  onClick={voice.leaveVoice}
+                  title="Leave Voice Chat"
+                  aria-label="Leave voice chat"
+                >
+                  <PhoneOff size={14} />
+                </button>
+              )}
             </div>
           )}
 
