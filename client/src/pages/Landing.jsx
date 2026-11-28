@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PlaySquare, ArrowRight, Tv } from 'lucide-react';
+import { PlaySquare, Tv } from 'lucide-react';
 
 export default function Landing() {
   const navigate = useNavigate();
@@ -28,11 +28,10 @@ export default function Landing() {
 
         <button
           type="button"
-          className="btn btn-primary btn-sm"
+          className="btn btn-ghost btn-sm"
           onClick={() => navigate('/dashboard')}
         >
-          <Tv size={15} />
-          <span>Open Dashboard</span>
+          Dashboard
         </button>
       </header>
 
@@ -43,7 +42,7 @@ export default function Landing() {
           </h1>
           <p style={{ fontSize: '0.9375rem', color: 'var(--text-2)' }}>
             Stream local media over a Cloudflare tunnel, WebRTC peer connection, or BitTorrent
-            magnet link with synchronized playback controls and room chat.
+            magnet link with synchronized playback controls, room chat, and voice.
           </p>
 
           <button
@@ -53,7 +52,6 @@ export default function Landing() {
           >
             <Tv size={18} />
             <span>Open Dashboard</span>
-            <ArrowRight size={16} />
           </button>
 
           <div className="landing-join-card">
@@ -75,8 +73,7 @@ export default function Landing() {
                 className="btn btn-secondary btn-sm"
                 disabled={!roomCodeInput.trim()}
               >
-                <span>Join</span>
-                <ArrowRight size={14} />
+                Join
               </button>
             </form>
           </div>

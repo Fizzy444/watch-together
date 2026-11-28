@@ -104,13 +104,7 @@ export default function AuthModal({
     >
       <div
         className="modal-content"
-        style={{
-          maxWidth: 420,
-          background: 'var(--bg-card)',
-          border: '1px solid var(--border-hover)',
-          borderRadius: 'var(--r-lg)',
-          boxShadow: '0 20px 50px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.05)',
-        }}
+        style={{ maxWidth: 420 }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -208,27 +202,15 @@ export default function AuthModal({
         <form onSubmit={handleSubmit}>
           <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
             {error && (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--sp-2)',
-                  padding: 'var(--sp-3)',
-                  background: 'rgba(239, 68, 68, 0.12)',
-                  border: '1px solid rgba(239, 68, 68, 0.35)',
-                  borderRadius: 'var(--r-sm)',
-                  color: '#ef4444',
-                  fontSize: '0.8125rem',
-                }}
-              >
+              <div className="modal-alert modal-alert-error">
                 <AlertCircle size={16} style={{ flexShrink: 0 }} />
                 <span>{error}</span>
               </div>
             )}
 
             {/* Username Input */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-              <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-2)' }}>
+            <div className="field-group">
+              <label htmlFor="auth-username-input" className="field-label">
                 Username
               </label>
               <div style={{ position: 'relative' }}>
@@ -243,6 +225,7 @@ export default function AuthModal({
                   }}
                 />
                 <input
+                  id="auth-username-input"
                   type="text"
                   className="input"
                   placeholder="e.g. Alex, MovieFan22"
@@ -260,8 +243,8 @@ export default function AuthModal({
             </div>
 
             {/* Password Input */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-              <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-2)' }}>
+            <div className="field-group">
+              <label htmlFor="auth-password-input" className="field-label">
                 Password
               </label>
               <div style={{ position: 'relative' }}>
@@ -276,6 +259,7 @@ export default function AuthModal({
                   }}
                 />
                 <input
+                  id="auth-password-input"
                   type={showPassword ? 'text' : 'password'}
                   className="input"
                   placeholder="Enter your password..."
@@ -326,16 +310,16 @@ export default function AuthModal({
                   alignItems: 'center',
                   gap: 'var(--sp-2)',
                   padding: 'var(--sp-2) var(--sp-3)',
-                  background: 'rgba(99, 102, 241, 0.08)',
-                  border: '1px solid rgba(99, 102, 241, 0.25)',
+                  background: 'var(--info-subtle)',
+                  border: '1px solid var(--info-border)',
                   borderRadius: 'var(--r-sm)',
                   color: 'var(--text-2)',
                   fontSize: '0.75rem',
                   lineHeight: 1.4,
                 }}
               >
-                <Loader2 size={13} className="spin" style={{ flexShrink: 0, color: 'var(--primary)' }} />
-                <span>Connecting to cloud server... (cold start may take a few moments)</span>
+                <Loader2 size={13} className="spin" style={{ flexShrink: 0, color: 'var(--info)' }} />
+                <span>Connecting to server...</span>
               </div>
             )}
           </div>
