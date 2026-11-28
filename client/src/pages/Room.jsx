@@ -1034,7 +1034,7 @@ export default function Room() {
                 { key: 'Shift + C', desc: 'Toggle Chat Sidebar' },
                 { key: 'Shift + M', desc: 'Mute / Unmute Voice Mic' },
                 { key: 'Shift + D', desc: 'Deafen / Undeafen Voice' },
-                { key: 'V (Hold)', desc: 'Push to Talk (when enabled)' },
+                { key: 'V (Hold)', desc: 'Push to talk (when enabled)' },
                 { key: 'C', desc: 'Toggle Subtitles' },
                 { key: 'B', desc: 'Cycle Audio Language' },
                 { key: 'Space / K', desc: 'Play / Pause (Host)' },
@@ -1068,7 +1068,6 @@ export default function Room() {
             isOpen={isVoiceSettingsOpen}
             onClose={() => setIsVoiceSettingsOpen(false)}
             voiceSettings={voice.voiceSettings}
-            activeNoiseMode={voice.activeNoiseMode}
             audioDevices={voice.audioDevices}
             isInVoice={voice.isInVoice}
             micLevel={voice.micLevel}
