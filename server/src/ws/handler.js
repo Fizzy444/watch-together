@@ -71,7 +71,16 @@ export function handleConnection(ws, req) {
   }
 
   // Add or reconnect user in room
-  const user = { id: clientId, name: userName, isHost: false, isAdmin: false, ws };
+  const user = {
+    id: clientId,
+    name: userName,
+    isHost: false,
+    isAdmin: false,
+    inVoice: false,
+    voiceMuted: false,
+    voiceDeafened: false,
+    ws,
+  };
   const result = addUser(roomId, user);
   if (!result) {
     ws.send(JSON.stringify({ type: 'error', message: 'Failed to join room' }));
@@ -79,7 +88,7 @@ export function handleConnection(ws, req) {
     return;
   }
 
-  const { room: updatedRoom, isReconnect } = result;
+  const { room: updatedRoom, isReconnect, wasInVoice } = result;
 
   console.log(`[WS] ${userName} (${clientId}) joined room ${roomId} (isReconnect=${isReconnect}, isHost=${user.isHost})`);
 
@@ -90,11 +99,29 @@ export function handleConnection(ws, req) {
     yourId: clientId,
   }));
 
+  if (isReconnect && wasInVoice) {
+    broadcast(roomId, {
+      type: 'voice_state',
+      userId: clientId,
+      inVoice: false,
+      muted: false,
+      deafened: false,
+    }, clientId);
+  }
+
   // Only broadcast to others if this was a brand new member
   if (!isReconnect) {
     broadcast(roomId, {
       type: 'user_joined',
-      user: { id: clientId, name: userName, isHost: user.isHost, isAdmin: Boolean(user.isAdmin) },
+      user: {
+        id: clientId,
+        name: userName,
+        isHost: user.isHost,
+        isAdmin: Boolean(user.isAdmin),
+        inVoice: false,
+        voiceMuted: false,
+        voiceDeafened: false,
+      },
     }, clientId);
   }
 
@@ -264,6 +291,65 @@ export function handleConnection(ws, req) {
             isBroadcasting: currentRoom.isBroadcasting,
             movieName: msg.movieName || currentRoom.movieName,
           }, clientId);
+        }
+        break;
+      }
+
+      case 'voice_join': {
+        if (!currentUser) return;
+        currentUser.inVoice = true;
+        currentUser.voiceMuted = Boolean(msg.muted);
+        currentUser.voiceDeafened = Boolean(msg.deafened);
+        broadcast(currentRoomId, {
+          type: 'voice_state',
+          userId: clientId,
+          inVoice: true,
+          muted: currentUser.voiceMuted,
+          deafened: currentUser.voiceDeafened,
+        });
+        break;
+      }
+
+      case 'voice_leave': {
+        if (!currentUser) return;
+        currentUser.inVoice = false;
+        currentUser.voiceMuted = false;
+        currentUser.voiceDeafened = false;
+        broadcast(currentRoomId, {
+          type: 'voice_state',
+          userId: clientId,
+          inVoice: false,
+          muted: false,
+          deafened: false,
+        });
+        break;
+      }
+
+      case 'voice_state': {
+        if (!currentUser || !currentUser.inVoice) return;
+        currentUser.voiceMuted = Boolean(msg.muted);
+        currentUser.voiceDeafened = Boolean(msg.deafened);
+        broadcast(currentRoomId, {
+          type: 'voice_state',
+          userId: clientId,
+          inVoice: true,
+          muted: currentUser.voiceMuted,
+          deafened: currentUser.voiceDeafened,
+        });
+        break;
+      }
+
+      case 'voice_signal': {
+        const targetId = msg.targetUserId;
+        if (!targetId || !msg.signal) return;
+        const targetUser = currentRoom.users.find((u) => u.id === targetId);
+        if (targetUser && targetUser.ws && targetUser.ws.readyState === 1) {
+          targetUser.ws.send(JSON.stringify({
+            type: 'voice_signal',
+            senderId: clientId,
+            senderName: userName,
+            signal: msg.signal,
+          }));
         }
         break;
       }
