@@ -9,15 +9,14 @@ import {
   SlidersHorizontal,
   Volume2,
   VolumeX,
-  Sparkles,
   Loader2,
   Radio,
 } from 'lucide-react';
 
-function getNoiseBadgeLabel(mode) {
+function getNoiseModeLabel(mode) {
   if (mode === 'rnnoise') return 'RNNoise AI';
-  if (mode === 'browser') return 'Standard NS';
-  return 'Raw Audio';
+  if (mode === 'browser') return 'Standard';
+  return 'Raw';
 }
 
 function VoiceDock({
@@ -51,24 +50,25 @@ function VoiceDock({
     return Boolean(u.inVoice);
   });
 
-  const selectedPeer = voiceParticipants.find((u) => u.id === selectedPeerId) || null;
+  const selectedPeer =
+    voiceParticipants.find((u) => u.id === selectedPeerId && u.id !== myUserId) || null;
 
   return (
-    <div className="voice-dock">
+    <section className="voice-dock" aria-label="Voice chat controls">
       {!isInVoice ? (
         <div className="voice-dock-idle">
-          <div className="voice-dock-idle-info">
+          <div className="voice-dock-idle-meta">
             <div className="voice-dock-title-row">
               <Headphones size={14} className="voice-dock-icon" />
-              <span className="voice-dock-title">Voice Chat</span>
+              <span className="voice-dock-title">Voice</span>
               {voiceParticipants.length > 0 && (
-                <span className="voice-dock-count">
-                  {voiceParticipants.length} active
-                </span>
+                <span className="voice-dock-count">{voiceParticipants.length}</span>
               )}
             </div>
             <span className="voice-dock-sub">
-              {getNoiseBadgeLabel(activeNoiseMode)} noise suppression ready
+              {voiceParticipants.length > 0
+                ? `${voiceParticipants.length} in channel · ${getNoiseModeLabel(activeNoiseMode)}`
+                : `${getNoiseModeLabel(activeNoiseMode)} noise suppression`}
             </span>
           </div>
 
@@ -77,7 +77,7 @@ function VoiceDock({
               type="button"
               className="btn-icon voice-icon-btn"
               onClick={onOpenSettings}
-              title="Voice & Audio Settings"
+              title="Voice settings"
               aria-label="Voice settings"
             >
               <SlidersHorizontal size={14} />
@@ -93,7 +93,7 @@ function VoiceDock({
               ) : (
                 <PhoneCall size={13} />
               )}
-              <span>{isJoining ? 'Joining...' : 'Join Voice'}</span>
+              <span>{isJoining ? 'Joining...' : 'Join'}</span>
             </button>
           </div>
         </div>
@@ -104,10 +104,7 @@ function VoiceDock({
               <span className="voice-live-dot" />
               <div className="voice-dock-connected-text">
                 <span className="voice-connected-label">Voice Connected</span>
-                <span className="voice-mode-tag">
-                  {activeNoiseMode === 'rnnoise' && <Sparkles size={10} />}
-                  <span>{getNoiseBadgeLabel(activeNoiseMode)}</span>
-                </span>
+                <span className="voice-mode-tag">{getNoiseModeLabel(activeNoiseMode)}</span>
               </div>
             </div>
 
@@ -116,7 +113,7 @@ function VoiceDock({
                 type="button"
                 className="btn-icon voice-icon-btn"
                 onClick={onOpenSettings}
-                title="Voice & Audio Settings"
+                title="Voice settings"
                 aria-label="Voice settings"
               >
                 <SlidersHorizontal size={14} />
@@ -141,12 +138,13 @@ function VoiceDock({
                 const peerMuted = isMe ? (isMuted || isDeafened) : Boolean(peer.voiceMuted);
                 const peerDeafened = isMe ? isDeafened : Boolean(peer.voiceDeafened);
                 const isLocallyMuted = !isMe && locallyMutedPeers.has(peer.id);
+                const isSelected = selectedPeer?.id === peer.id;
 
                 return (
                   <button
                     key={peer.id}
                     type="button"
-                    className={`voice-peer-chip ${peerSpeaking ? 'is-speaking' : ''} ${selectedPeerId === peer.id ? 'is-selected' : ''}`}
+                    className={`voice-peer-row ${peerSpeaking ? 'is-speaking' : ''} ${isSelected ? 'is-selected' : ''} ${isMe ? 'is-self' : ''}`}
                     onClick={() => {
                       if (!isMe) {
                         setSelectedPeerId((prev) => (prev === peer.id ? null : peer.id));
@@ -159,15 +157,22 @@ function VoiceDock({
                     </span>
                     <span className="voice-peer-name">
                       {peer.name}
-                      {isMe ? ' (You)' : ''}
+                      {isMe && <span className="voice-peer-self-tag">(You)</span>}
                     </span>
-                    {isLocallyMuted ? (
-                      <VolumeX size={11} className="voice-peer-state-icon is-danger" />
-                    ) : peerDeafened ? (
-                      <HeadphoneOff size={11} className="voice-peer-state-icon is-danger" />
-                    ) : peerMuted ? (
-                      <MicOff size={11} className="voice-peer-state-icon is-danger" />
-                    ) : null}
+                    <span className="voice-peer-indicators">
+                      {!isMe && (peerVolumes[peer.id] ?? 100) !== 100 && !isLocallyMuted && (
+                        <span className="voice-peer-vol-tag">
+                          {peerVolumes[peer.id]}%
+                        </span>
+                      )}
+                      {isLocallyMuted ? (
+                        <VolumeX size={12} className="voice-peer-state-icon is-danger" />
+                      ) : peerDeafened ? (
+                        <HeadphoneOff size={12} className="voice-peer-state-icon is-danger" />
+                      ) : peerMuted ? (
+                        <MicOff size={12} className="voice-peer-state-icon is-danger" />
+                      ) : null}
+                    </span>
                   </button>
                 );
               })}
@@ -222,20 +227,27 @@ function VoiceDock({
               onPointerCancel={() => onSetPttPressed(false)}
             >
               <Radio size={12} />
-              <span>{isPttPressed ? 'Transmitting...' : 'Hold V or Press to Talk'}</span>
+              <span>{isPttPressed ? 'Transmitting' : 'Hold V or Press to Talk'}</span>
             </button>
           )}
+
+          <div className="voice-meter-track" title="Microphone input level">
+            <div
+              className={`voice-meter-fill ${isTalking ? 'is-talking' : ''}`}
+              style={{ width: `${isMuted || isDeafened ? 0 : micLevel}%` }}
+            />
+          </div>
 
           <div className="voice-dock-controls">
             <button
               type="button"
               className={`voice-control-btn ${isMuted || isDeafened ? 'is-danger' : ''}`}
               onClick={onToggleMute}
-              title={isMuted || isDeafened ? 'Unmute Mic (Shift+M)' : 'Mute Mic (Shift+M)'}
+              title={isMuted || isDeafened ? 'Unmute (Shift+M)' : 'Mute (Shift+M)'}
               aria-label={isMuted || isDeafened ? 'Unmute microphone' : 'Mute microphone'}
             >
-              {isMuted || isDeafened ? <MicOff size={15} /> : <Mic size={15} />}
-              <span>{isMuted || isDeafened ? 'Muted' : 'Mic On'}</span>
+              {isMuted || isDeafened ? <MicOff size={14} /> : <Mic size={14} />}
+              <span>{isMuted || isDeafened ? 'Unmute' : 'Mute'}</span>
             </button>
 
             <button
@@ -245,20 +257,13 @@ function VoiceDock({
               title={isDeafened ? 'Undeafen (Shift+D)' : 'Deafen (Shift+D)'}
               aria-label={isDeafened ? 'Undeafen' : 'Deafen'}
             >
-              {isDeafened ? <HeadphoneOff size={15} /> : <Headphones size={15} />}
-              <span>{isDeafened ? 'Deafened' : 'Audio'}</span>
+              {isDeafened ? <HeadphoneOff size={14} /> : <Headphones size={14} />}
+              <span>{isDeafened ? 'Undeafen' : 'Deafen'}</span>
             </button>
-
-            <div className="voice-meter-wrap" title="Live microphone level">
-              <div
-                className={`voice-meter-fill ${isTalking ? 'is-talking' : ''}`}
-                style={{ width: `${isMuted || isDeafened ? 0 : micLevel}%` }}
-              />
-            </div>
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }
 

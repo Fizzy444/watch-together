@@ -3,10 +3,7 @@ import {
   X,
   Mic,
   Volume2,
-  Sparkles,
   SlidersHorizontal,
-  Radio,
-  ShieldCheck,
 } from 'lucide-react';
 import {
   createVoiceInputPipeline,
@@ -16,18 +13,18 @@ import {
 const NOISE_MODES = [
   {
     id: 'rnnoise',
-    label: 'Discord AI (RNNoise)',
-    desc: 'Neural noise suppression + high-pass filter & gate. Blocks fans, typing, and room noise.',
+    label: 'RNNoise AI',
+    desc: 'Neural denoiser with high-pass filter and noise gate for keyboard, fan, and room noise.',
   },
   {
     id: 'browser',
-    label: 'Standard (Browser)',
-    desc: 'Lightweight built-in WebRTC noise suppression.',
+    label: 'Standard',
+    desc: 'Built-in browser noise suppression with lighter CPU usage.',
   },
   {
     id: 'off',
-    label: 'Off (Raw Audio)',
-    desc: 'Unprocessed microphone feed for studio mics.',
+    label: 'Off',
+    desc: 'Raw unprocessed microphone audio for dedicated studio setups.',
   },
 ];
 
@@ -93,10 +90,12 @@ export default function VoiceSettingsModal({
       };
       setIsTestingMic(true);
     } catch (err) {
-      setTestError(err?.message || 'Unable to start mic test.');
+      setTestError(err?.message || 'Unable to start microphone test.');
     }
   }
 
+  const selectedNoiseMeta =
+    NOISE_MODES.find((m) => m.id === voiceSettings.noiseSuppressionMode) || NOISE_MODES[0];
   const displayedLevel = isTestingMic ? testLevel : (isInVoice ? micLevel : 0);
   const supportsOutputSelect =
     typeof HTMLMediaElement !== 'undefined' &&
@@ -110,8 +109,8 @@ export default function VoiceSettingsModal({
       >
         <div className="modal-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
-            <SlidersHorizontal size={17} />
-            <h3>Voice & Audio Settings</h3>
+            <SlidersHorizontal size={16} />
+            <h3>Voice Settings</h3>
           </div>
           <button
             type="button"
@@ -123,56 +122,51 @@ export default function VoiceSettingsModal({
           </button>
         </div>
 
-        <div className="modal-body" style={{ gap: 'var(--sp-4)' }}>
+        <div className="modal-body" style={{ gap: 'var(--sp-5)' }}>
           <div className="field-group">
             <div className="voice-setting-label-row">
-              <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Sparkles size={13} color="var(--success)" />
-                Noise Suppression
-              </label>
+              <span className="field-label">Noise suppression</span>
               {isInVoice && (
-                <span className="badge badge-success badge-compact">
-                  Active: {activeNoiseMode === 'rnnoise' ? 'RNNoise AI' : activeNoiseMode === 'browser' ? 'Standard' : 'Off'}
+                <span className="voice-setting-status">
+                  Running: {activeNoiseMode === 'rnnoise' ? 'RNNoise AI' : activeNoiseMode === 'browser' ? 'Standard' : 'Off'}
                 </span>
               )}
             </div>
-            <div className="voice-mode-grid">
+            <div className="voice-segmented" role="group" aria-label="Noise suppression mode">
               {NOISE_MODES.map((mode) => {
                 const selected = voiceSettings.noiseSuppressionMode === mode.id;
                 return (
                   <button
                     key={mode.id}
                     type="button"
-                    className={`voice-mode-option ${selected ? 'is-selected' : ''}`}
+                    className={`voice-segmented-btn ${selected ? 'is-selected' : ''}`}
                     onClick={() => onUpdateSettings({ noiseSuppressionMode: mode.id })}
+                    aria-pressed={selected}
                   >
-                    <div className="voice-mode-option-title">{mode.label}</div>
-                    <div className="voice-mode-option-desc">{mode.desc}</div>
+                    {mode.label}
                   </button>
                 );
               })}
             </div>
+            <p className="voice-setting-hint">{selectedNoiseMeta.desc}</p>
           </div>
 
           <div className="field-group">
-            <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Radio size={13} />
-              Input Mode
-            </label>
-            <div className="voice-input-mode-row">
+            <span className="field-label">Input mode</span>
+            <div className="voice-segmented" role="group" aria-label="Microphone input mode">
               <button
                 type="button"
-                className={`btn btn-sm ${voiceSettings.inputMode === 'vad' ? 'btn-primary' : 'btn-secondary'}`}
+                className={`voice-segmented-btn ${voiceSettings.inputMode === 'vad' ? 'is-selected' : ''}`}
                 onClick={() => onUpdateSettings({ inputMode: 'vad' })}
-                style={{ flex: 1 }}
+                aria-pressed={voiceSettings.inputMode === 'vad'}
               >
                 Voice Activity
               </button>
               <button
                 type="button"
-                className={`btn btn-sm ${voiceSettings.inputMode === 'ptt' ? 'btn-primary' : 'btn-secondary'}`}
+                className={`voice-segmented-btn ${voiceSettings.inputMode === 'ptt' ? 'is-selected' : ''}`}
                 onClick={() => onUpdateSettings({ inputMode: 'ptt' })}
-                style={{ flex: 1 }}
+                aria-pressed={voiceSettings.inputMode === 'ptt'}
               >
                 Push to Talk (Hold V)
               </button>
@@ -183,7 +177,7 @@ export default function VoiceSettingsModal({
             <div className="field-group">
               <div className="voice-setting-label-row">
                 <label htmlFor="voice-gate-slider" className="field-label">
-                  Noise Gate Sensitivity
+                  Input sensitivity
                 </label>
                 <span className="voice-setting-value">
                   {voiceSettings.gateThresholdDb} dB
@@ -202,24 +196,21 @@ export default function VoiceSettingsModal({
                 className="voice-range-input"
               />
               <div className="voice-slider-hints">
-                <span>Sensitive (quiet voice)</span>
-                <span>Strict (blocks background)</span>
+                <span>Sensitive</span>
+                <span>Strict gate</span>
               </div>
             </div>
           )}
 
           <div className="field-group">
             <div className="voice-setting-label-row">
-              <label className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Mic size={13} />
-                Mic Test & Input Level
-              </label>
+              <span className="field-label">Microphone check</span>
               <button
                 type="button"
                 className={`btn btn-sm ${isTestingMic ? 'btn-danger-soft' : 'btn-secondary'}`}
                 onClick={toggleMicTest}
               >
-                {isTestingMic ? 'Stop Test' : 'Let’s Check (Loopback)'}
+                {isTestingMic ? 'Stop Test' : 'Test Mic'}
               </button>
             </div>
             <div className="voice-test-meter">
@@ -234,7 +225,7 @@ export default function VoiceSettingsModal({
           <div className="field-group">
             <div className="voice-setting-label-row">
               <label htmlFor="voice-mic-gain" className="field-label">
-                Input Gain
+                Input volume
               </label>
               <span className="voice-setting-value">
                 {Math.round((voiceSettings.micGain || 1) * 100)}%
@@ -256,7 +247,7 @@ export default function VoiceSettingsModal({
             <div className="field-group">
               <label htmlFor="voice-input-device" className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Mic size={13} />
-                Input Device
+                Input device
               </label>
               <select
                 id="voice-input-device"
@@ -264,7 +255,7 @@ export default function VoiceSettingsModal({
                 value={voiceSettings.inputDeviceId}
                 onChange={(e) => onUpdateSettings({ inputDeviceId: e.target.value })}
               >
-                <option value="">Default Microphone</option>
+                <option value="">Default microphone</option>
                 {audioDevices.inputs.map((dev, idx) => (
                   <option key={dev.deviceId || idx} value={dev.deviceId}>
                     {dev.label || `Microphone ${idx + 1}`}
@@ -277,7 +268,7 @@ export default function VoiceSettingsModal({
               <div className="field-group">
                 <label htmlFor="voice-output-device" className="field-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Volume2 size={13} />
-                  Output Device
+                  Output device
                 </label>
                 <select
                   id="voice-output-device"
@@ -285,7 +276,7 @@ export default function VoiceSettingsModal({
                   value={voiceSettings.outputDeviceId}
                   onChange={(e) => onUpdateSettings({ outputDeviceId: e.target.value })}
                 >
-                  <option value="">Default Speakers / Headphones</option>
+                  <option value="">Default speakers / headphones</option>
                   {audioDevices.outputs.map((dev, idx) => (
                     <option key={dev.deviceId || idx} value={dev.deviceId}>
                       {dev.label || `Output ${idx + 1}`}
@@ -297,36 +288,47 @@ export default function VoiceSettingsModal({
           </div>
 
           <div className="voice-toggle-list">
-            <label className="voice-toggle-row">
+            <div className="voice-toggle-row">
               <div>
-                <div className="voice-toggle-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <ShieldCheck size={13} color="var(--info)" />
-                  Echo Cancellation
-                </div>
+                <div className="voice-toggle-title">Echo cancellation</div>
                 <div className="voice-toggle-desc">
-                  Prevents movie audio from speakers feeding back into your mic
+                  Prevents movie audio from feeding back into your mic
                 </div>
               </div>
-              <input
-                type="checkbox"
-                checked={voiceSettings.echoCancellation}
-                onChange={(e) => onUpdateSettings({ echoCancellation: e.target.checked })}
-              />
-            </label>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={voiceSettings.echoCancellation}
+                aria-label="Echo cancellation"
+                className={`voice-switch ${voiceSettings.echoCancellation ? 'is-on' : ''}`}
+                onClick={() =>
+                  onUpdateSettings({ echoCancellation: !voiceSettings.echoCancellation })
+                }
+              >
+                <span className="voice-switch-thumb" />
+              </button>
+            </div>
 
-            <label className="voice-toggle-row">
+            <div className="voice-toggle-row">
               <div>
-                <div className="voice-toggle-title">Auto Gain Control</div>
+                <div className="voice-toggle-title">Auto gain control</div>
                 <div className="voice-toggle-desc">
-                  Automatically balances quiet and loud speaking levels
+                  Balances quiet and loud speech automatically
                 </div>
               </div>
-              <input
-                type="checkbox"
-                checked={voiceSettings.autoGainControl}
-                onChange={(e) => onUpdateSettings({ autoGainControl: e.target.checked })}
-              />
-            </label>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={voiceSettings.autoGainControl}
+                aria-label="Auto gain control"
+                className={`voice-switch ${voiceSettings.autoGainControl ? 'is-on' : ''}`}
+                onClick={() =>
+                  onUpdateSettings({ autoGainControl: !voiceSettings.autoGainControl })
+                }
+              >
+                <span className="voice-switch-thumb" />
+              </button>
+            </div>
           </div>
         </div>
 
