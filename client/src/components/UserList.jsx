@@ -1,5 +1,12 @@
 import { memo } from 'react';
-import { Users, Shield, ShieldOff } from 'lucide-react';
+import {
+  Users,
+  Shield,
+  ShieldOff,
+  Mic,
+  MicOff,
+  HeadphoneOff,
+} from 'lucide-react';
 
 function UserList({
   users = [],
@@ -7,6 +14,11 @@ function UserList({
   currentUserId,
   canManageAdmins = false,
   onToggleAdmin,
+  speakingPeers,
+  isTalking = false,
+  isInVoice = false,
+  isMuted = false,
+  isDeafened = false,
 }) {
   const uniqueUsers = Array.from(new Map(users.map((u) => [u.id, u])).values());
 
@@ -25,10 +37,14 @@ function UserList({
           const isUserHost = user.isHost || user.id === hostId;
           const isUserAdmin = !isUserHost && Boolean(user.isAdmin);
           const showAdminToggle = canManageAdmins && !isMe && !isUserHost && Boolean(onToggleAdmin);
+          const userInVoice = isMe ? (isInVoice || user.inVoice) : Boolean(user.inVoice);
+          const userSpeaking = isMe ? isTalking : Boolean(speakingPeers?.has(user.id));
+          const userMuted = isMe ? (isMuted || isDeafened) : Boolean(user.voiceMuted);
+          const userDeafened = isMe ? isDeafened : Boolean(user.voiceDeafened);
 
           return (
             <div key={user.id} className="user-item">
-              <div className="user-avatar">
+              <div className={`user-avatar ${userSpeaking ? 'is-speaking' : ''}`}>
                 {user.name?.[0]?.toUpperCase() || '?'}
               </div>
               <div className="user-info">
@@ -57,6 +73,28 @@ function UserList({
                   </span>
                 )}
               </div>
+              {userInVoice && (
+                <span
+                  className={`user-voice-badge ${userSpeaking ? 'is-speaking' : ''} ${userMuted || userDeafened ? 'is-muted' : ''}`}
+                  title={
+                    userDeafened
+                      ? 'Deafened'
+                      : userMuted
+                        ? 'Mic Muted'
+                        : userSpeaking
+                          ? 'Speaking'
+                          : 'In Voice'
+                  }
+                >
+                  {userDeafened ? (
+                    <HeadphoneOff size={12} />
+                  ) : userMuted ? (
+                    <MicOff size={12} />
+                  ) : (
+                    <Mic size={12} />
+                  )}
+                </span>
+              )}
               {showAdminToggle && (
                 <button
                   type="button"

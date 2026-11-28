@@ -99,6 +99,25 @@ export function useRoom(initialRoom) {
         });
         break;
 
+      case 'voice_state':
+        setRoom((r) => {
+          if (!r) return r;
+          return {
+            ...r,
+            users: r.users.map((u) =>
+              u.id === msg.userId
+                ? {
+                    ...u,
+                    inVoice: Boolean(msg.inVoice),
+                    voiceMuted: Boolean(msg.muted),
+                    voiceDeafened: Boolean(msg.deafened),
+                  }
+                : u
+            ),
+          };
+        });
+        break;
+
       case 'play':
         setRoom((r) => (!r ? r : { ...r, playing: true, currentTime: msg.position ?? r.currentTime, hostDisconnected: false }));
         break;

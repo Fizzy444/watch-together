@@ -21,6 +21,9 @@ const rooms = new Map();
  * @property {string} name
  * @property {boolean} isHost
  * @property {boolean} isAdmin
+ * @property {boolean} inVoice
+ * @property {boolean} voiceMuted
+ * @property {boolean} voiceDeafened
  * @property {import('ws').WebSocket} ws
  */
 
@@ -182,6 +185,7 @@ export function addUser(roomId, user) {
   const existingIndex = room.users.findIndex((u) => u.id === user.id);
   if (existingIndex !== -1) {
     const existing = room.users[existingIndex];
+    const wasInVoice = Boolean(existing.inVoice);
     if (existing.ws && existing.ws !== user.ws) {
       try {
         existing.ws.close();
@@ -189,6 +193,9 @@ export function addUser(roomId, user) {
     }
     user.isHost = existing.isHost || (room.hostId === user.id) || (room.creatorId === user.id);
     user.isAdmin = !user.isHost && Boolean(existing.isAdmin || room.adminIds?.has(user.id));
+    user.inVoice = false;
+    user.voiceMuted = false;
+    user.voiceDeafened = false;
     room.users[existingIndex] = user;
     if (user.isHost) {
       room.hostId = user.id;
@@ -196,7 +203,7 @@ export function addUser(roomId, user) {
     }
     cancelEmptyTimer(room);
     resetExpiry(room);
-    return { room, isReconnect: true };
+    return { room, isReconnect: true, wasInVoice };
   }
 
   // If this user is the room creator or recognized host, restore host
@@ -367,11 +374,14 @@ export function roomPublicView(room) {
     hostId: room.hostId,
     subtitleTracks: room.subtitleTracks || [],
     audioTracks: room.audioTracks || [],
-    users: room.users.map(({ id, name, isHost, isAdmin }) => ({
+    users: room.users.map(({ id, name, isHost, isAdmin, inVoice, voiceMuted, voiceDeafened }) => ({
       id,
       name,
       isHost,
       isAdmin: Boolean(isAdmin),
+      inVoice: Boolean(inVoice),
+      voiceMuted: Boolean(voiceMuted),
+      voiceDeafened: Boolean(voiceDeafened),
     })),
     messages: (room.messages || []).map(({ id, senderId, senderName, text, timestamp, isHost }) => ({
       id,

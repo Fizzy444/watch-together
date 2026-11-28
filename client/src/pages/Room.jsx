@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } fro
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { getServerUrl, DEFAULT_SERVER_URL } from '../utils/serverUrl.js';
 import { useWebRTC } from '../hooks/useWebRTC.js';
+import { useVoiceChat } from '../hooks/useVoiceChat.js';
 import { getRoom, getStreamStatus, closeRoom } from '../api/index.js';
 import { useWebSocket, getSessionClientId } from '../hooks/useWebSocket.js';
 import { useRoom } from '../hooks/useRoom.js';
@@ -10,8 +11,10 @@ import VideoPlayer from '../components/VideoPlayer.jsx';
 import UserList from '../components/UserList.jsx';
 import ChatBox from '../components/ChatBox.jsx';
 import ProfileBadge from '../components/ProfileBadge.jsx';
+import VoiceDock from '../components/VoiceDock.jsx';
 
 const ProfileModal = lazy(() => import('../components/ProfileModal.jsx'));
+const VoiceSettingsModal = lazy(() => import('../components/VoiceSettingsModal.jsx'));
 import {
   ArrowLeft,
   Loader2,
@@ -32,6 +35,12 @@ import {
   PlaySquare,
   Film,
   Play,
+  Mic,
+  MicOff,
+  Headphones,
+  HeadphoneOff,
+  PhoneCall,
+  PhoneOff,
 } from 'lucide-react';
 
 function pushToast(setToasts, msg, type = 'info') {
@@ -94,6 +103,7 @@ export default function Room() {
   const [closing, setClosing] = useState(false);
   const [isRoomClosed, setIsRoomClosed] = useState(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [isVoiceSettingsOpen, setIsVoiceSettingsOpen] = useState(false);
 
   const [initialRoom, setInitialRoom] = useState(null);
 
@@ -108,6 +118,7 @@ export default function Room() {
   const { room, applyMessage } = useRoom(initialRoom);
 
   const handleWebRTCMessageRef = useRef(null);
+  const handleVoiceMessageRef = useRef(null);
   const videoPlayerRef = useRef(null);
 
   const isTunnelRef = useRef(false);
@@ -145,6 +156,10 @@ export default function Room() {
 
       if (msg.type.startsWith("webrtc_") || msg.type === "host_changed") {
         handleWebRTCMessageRef.current?.(msg);
+      }
+
+      if (msg.type.startsWith("voice_") || msg.type === "user_left") {
+        handleVoiceMessageRef.current?.(msg);
       }
 
       if (msg.type === 'seek' && isHostRef.current && isTunnelRef.current && msg.initiatorId !== myUserId) {
@@ -203,6 +218,30 @@ export default function Room() {
   useEffect(() => {
     handleWebRTCMessageRef.current = handleWebRTCMessage;
   }, [handleWebRTCMessage]);
+
+  const voice = useVoiceChat({
+    roomUsers: room?.users || [],
+    myUserId,
+    connected,
+    send,
+  });
+  const {
+    handleVoiceMessage,
+    voiceError,
+    clearVoiceError,
+    leaveVoice,
+  } = voice;
+
+  useEffect(() => {
+    handleVoiceMessageRef.current = handleVoiceMessage;
+  }, [handleVoiceMessage]);
+
+  useEffect(() => {
+    if (voiceError) {
+      pushToast(setToasts, voiceError, 'error');
+      clearVoiceError();
+    }
+  }, [voiceError, clearVoiceError]);
 
   const localBlobUrl = useMemo(() => {
     if (!localFile) return null;
@@ -270,13 +309,14 @@ export default function Room() {
   }
 
   const handleLeaveRoom = useCallback(() => {
+    leaveVoice();
     if (isHost && isTunnel) {
       window.electronAPI?.stopHostTunnel?.();
       window.__hostLocalStreamUrl = null;
       window.__hostSubtitleUrl = null;
     }
     navigate('/dashboard');
-  }, [isHost, isTunnel, navigate]);
+  }, [isHost, isTunnel, navigate, leaveVoice]);
 
   // Auto-redirect if room was closed
   useEffect(() => {
@@ -290,6 +330,7 @@ export default function Room() {
   async function handleCloseRoom() {
     setClosing(true);
     try {
+      voice.leaveVoice();
       if (isTunnel) {
         window.electronAPI?.stopHostTunnel?.();
       }
@@ -639,6 +680,51 @@ export default function Room() {
         </div>
 
         <div className="room-topbar-right">
+          {/* Quick Voice Controls (accessible even in Cinema Mode & Mobile) */}
+          {!voice.isInVoice ? (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm room-topbar-btn voice-topbar-join-btn"
+              onClick={voice.joinVoice}
+              disabled={voice.isJoining || !connected}
+              title="Join Voice Chat with RNNoise suppression"
+              aria-label="Join voice chat"
+            >
+              {voice.isJoining ? <Loader2 size={14} className="spinner" /> : <PhoneCall size={14} />}
+              <span className="room-topbar-btn-label">{voice.isJoining ? 'Joining...' : 'Voice'}</span>
+            </button>
+          ) : (
+            <div className="voice-topbar-group">
+              <button
+                type="button"
+                className={`btn btn-sm room-topbar-btn voice-topbar-btn ${voice.isMuted || voice.isDeafened ? 'is-danger' : voice.isTalking ? 'is-talking' : ''}`}
+                onClick={voice.toggleMute}
+                title={voice.isMuted || voice.isDeafened ? 'Unmute Mic (Shift+M)' : 'Mute Mic (Shift+M)'}
+                aria-label={voice.isMuted || voice.isDeafened ? 'Unmute microphone' : 'Mute microphone'}
+              >
+                {voice.isMuted || voice.isDeafened ? <MicOff size={14} /> : <Mic size={14} />}
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm room-topbar-btn voice-topbar-btn ${voice.isDeafened ? 'is-danger' : ''}`}
+                onClick={voice.toggleDeafen}
+                title={voice.isDeafened ? 'Undeafen (Shift+D)' : 'Deafen (Shift+D)'}
+                aria-label={voice.isDeafened ? 'Undeafen' : 'Deafen'}
+              >
+                {voice.isDeafened ? <HeadphoneOff size={14} /> : <Headphones size={14} />}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm room-topbar-btn voice-topbar-btn voice-topbar-leave"
+                onClick={voice.leaveVoice}
+                title="Leave Voice Chat"
+                aria-label="Leave voice chat"
+              >
+                <PhoneOff size={14} />
+              </button>
+            </div>
+          )}
+
           {/* Profile Badge with dropdown */}
           {userName && (
             <div className="room-topbar-profile">
@@ -887,10 +973,40 @@ export default function Room() {
                   currentUserId={myUserId}
                   canManageAdmins={isHost}
                   onToggleAdmin={handleToggleAdmin}
+                  speakingPeers={voice.speakingPeers}
+                  isTalking={voice.isTalking}
+                  isInVoice={voice.isInVoice}
+                  isMuted={voice.isMuted}
+                  isDeafened={voice.isDeafened}
                 />
               </div>
             )}
           </div>
+
+          <VoiceDock
+            users={room.users || []}
+            myUserId={myUserId}
+            isInVoice={voice.isInVoice}
+            isJoining={voice.isJoining}
+            isMuted={voice.isMuted}
+            isDeafened={voice.isDeafened}
+            isTalking={voice.isTalking}
+            micLevel={voice.micLevel}
+            speakingPeers={voice.speakingPeers}
+            peerVolumes={voice.peerVolumes}
+            locallyMutedPeers={voice.locallyMutedPeers}
+            activeNoiseMode={voice.activeNoiseMode}
+            inputMode={voice.voiceSettings.inputMode}
+            isPttPressed={voice.isPttPressed}
+            onSetPttPressed={voice.setIsPttPressed}
+            onJoinVoice={voice.joinVoice}
+            onLeaveVoice={voice.leaveVoice}
+            onToggleMute={voice.toggleMute}
+            onToggleDeafen={voice.toggleDeafen}
+            onSetPeerVolume={voice.setPeerVolume}
+            onToggleLocalPeerMute={voice.toggleLocalPeerMute}
+            onOpenSettings={() => setIsVoiceSettingsOpen(true)}
+          />
         </div>
       </div>
 
@@ -914,13 +1030,16 @@ export default function Room() {
             <div className="modal-body shortcuts-list">
               {[
                 { key: 'Shift + C', desc: 'Toggle Chat Sidebar' },
+                { key: 'Shift + M', desc: 'Mute / Unmute Voice Mic' },
+                { key: 'Shift + D', desc: 'Deafen / Undeafen Voice' },
+                { key: 'V (Hold)', desc: 'Push to Talk (when enabled)' },
                 { key: 'C', desc: 'Toggle Subtitles' },
                 { key: 'B', desc: 'Cycle Audio Language' },
                 { key: 'Space / K', desc: 'Play / Pause (Host)' },
                 { key: '← / →', desc: 'Skip 5s (Host)' },
                 { key: 'J / L', desc: 'Skip 10s (Host)' },
                 { key: '↑ / ↓', desc: 'Volume' },
-                { key: 'M', desc: 'Mute / Unmute' },
+                { key: 'M', desc: 'Mute / Unmute Video' },
                 { key: 'F', desc: 'Toggle Fullscreen' },
               ].map((s) => (
                 <div key={s.key} className="shortcut-row">
@@ -940,6 +1059,18 @@ export default function Room() {
             onClose={() => setIsProfileModalOpen(false)}
             currentName={userName}
             onSave={handleProfileSave}
+          />
+        )}
+        {isVoiceSettingsOpen && (
+          <VoiceSettingsModal
+            isOpen={isVoiceSettingsOpen}
+            onClose={() => setIsVoiceSettingsOpen(false)}
+            voiceSettings={voice.voiceSettings}
+            activeNoiseMode={voice.activeNoiseMode}
+            audioDevices={voice.audioDevices}
+            isInVoice={voice.isInVoice}
+            micLevel={voice.micLevel}
+            onUpdateSettings={voice.updateVoiceSettings}
           />
         )}
       </Suspense>
